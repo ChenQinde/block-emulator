@@ -33,7 +33,6 @@ func RunClient(path string) {
 				if !finished[id] {
 					finished[id] = true
 					finished_cnt += 1
-					//fmt.Printf("finish nums is %d\n", finished_cnt)
 					if finished_cnt == tx_cnt {
 						all_finish <- 1
 						break
@@ -71,10 +70,6 @@ func RunClient(path string) {
 	go listener()
 
 	<-all_finish
-	nodeTable, _ := ioutil.ReadFile("params/nodeTable.json")
-	json.Unmarshal(nodeTable, &params.NodeTable)
-	//fmt.Println(nodeTable)
-	//fmt.Println(params.NodeTable)
 	for shardID, nodes := range params.NodeTable {
 		for nodeID, addr := range nodes {
 			fmt.Printf("客户端向分片%v的节点%v发送终止运行消息\n", shardID, nodeID)

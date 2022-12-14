@@ -25,7 +25,7 @@ func Min(a, b int) int {
 	return b
 }
 
-// 使用tcp发送消息
+//使用tcp发送消息
 func TcpDial(context []byte, addr string) {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {

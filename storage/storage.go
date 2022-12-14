@@ -4,9 +4,7 @@ import (
 	"blockEmulator/core"
 	"blockEmulator/trie"
 	"errors"
-	"fmt"
 	"log"
-	"os"
 
 	"blockEmulator/params"
 
@@ -30,28 +28,9 @@ type Storage struct {
 	DB                    *bolt.DB
 }
 
-func PathExists(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err
-}
 func NewStorage(chainConfig *params.ChainConfig) *Storage {
-	cond, err := PathExists("./record")
-	if !cond {
-		err := os.Mkdir("./record", os.ModePerm)
-		if err != nil {
-			fmt.Printf("创建目录异常 -> %v\n", err)
-		} else {
-			fmt.Println("创建成功!")
-		}
-	}
 	s := &Storage{
-		dbFile:                "./record/" + chainConfig.ShardID + "_" + chainConfig.NodeID + "_" + dbFile,
+		dbFile:                chainConfig.ShardID + "_" + chainConfig.NodeID + "_" + dbFile,
 		blocksBucket:          blocksBucket,
 		blockHeaderBucket:     blockHeaderBucket,
 		newestBlockHashBucket: newestBlockHashBucket,

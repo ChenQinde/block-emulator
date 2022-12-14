@@ -39,8 +39,6 @@ func (pool *Tx_pool) FetchTxs2Pack() (txs []*Transaction) {
 	config := params.Config
 	tx_cnt := config.MaxBlockSize
 	pool.lock.Lock()
-
-	//fmt.Printf("Pool txs length is %d\n", len(pool.Queue))
 	if len(pool.Queue) < config.MaxBlockSize {
 		tx_cnt = len(pool.Queue)
 	}
@@ -53,7 +51,7 @@ func (pool *Tx_pool) FetchTxs2Pack() (txs []*Transaction) {
 // relay
 func (pool *Tx_pool) AddRelayTx(tx *Transaction, shardID string) {
 	pool.lock.Lock()
-	queue, ok := pool.Relay_Pools[shardID]
+	queue, ok := pool.Relay_Pools[shardID];
 	if !ok {
 		pool.Relay_Pools[shardID] = make([]*Transaction, 0)
 	}

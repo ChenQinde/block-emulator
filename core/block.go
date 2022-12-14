@@ -87,7 +87,6 @@ func (b *Block) PrintBlock() {
 	fmt.Printf("blockHeader: \n")
 	b.Header.PrintBlockHeader()
 	fmt.Printf("transactions: \n")
-	//fmt.Printf("transactions length is %d\n", len(b.Transactions))
 	for _, tx := range b.Transactions {
 		tx.PrintTx()
 	}
