@@ -15,33 +15,50 @@ import (
 	"time"
 )
 
+type Shard struct {
+	ShardID int
+	Nodes   []*Node
+}
+
 type Node struct {
-	P *pbft.Pbft //代表分片内的那部分
+	NodeID int
+	P      *pbft.Pbft //代表分片内的那部分
 }
 
 var (
 	txs []*core.Transaction
 )
 
-func NewNode() *Node {
+var nodes []*Node
+
+func NewNode(shardID int, nodeID int) *Node {
 	node := new(Node)
-	node.P = pbft.NewPBFT()
+	node.P = pbft.NewPBFT(shardID, nodeID)
+	node.NodeID = nodeID
 
 	go node.P.TcpListen() //启动节点
 	block := node.P.Node.CurChain.CurrentBlock
 	fmt.Printf("current block: \n")
 	block.PrintBlock()
-
-	config := params.Config
-	if config.NodeID == "N0" {
-		pbft.NewLog(config.ShardID)
-		txs = LoadTxsWithShard(config.Path, params.ShardTable[config.ShardID])
-		go InjectTxs2Shard(node.P.Node.CurChain.Tx_pool)
-		go node.P.Propose()
-		go node.P.TryRelay()
-	}
-
+	nodes = append(nodes, node)
 	return node
+}
+
+func NewShard(shardID int, node_num int) *Shard {
+	shard := new(Shard)
+	shard.ShardID = shardID
+	nodes = nil
+	NewNodes(shardID, node_num)
+	shard.Nodes = nodes
+	return shard
+}
+
+func NewNodes(shardID int, node_num int) {
+	for nodeID := 0; nodeID < node_num; nodeID++ {
+		nowNodeID := fmt.Sprintf("S%dN%d", shardID, nodeID)
+		fmt.Printf("Node%s is running!\n", nowNodeID)
+		NewNode(shardID, nodeID)
+	}
 }
 
 func LoadTxsWithShard(path string, sid int) []*core.Transaction {
@@ -85,7 +102,7 @@ func LoadTxsWithShard(path string, sid int) []*core.Transaction {
 	return txs
 }
 
-func InjectTxs2Shard(pool *core.Tx_pool) {
+func InjectTxs2Shard(pool *core.Tx_pool, txs []*core.Transaction) {
 	cnt := 0
 	inject_speed := params.Config.Inject_speed
 	for {

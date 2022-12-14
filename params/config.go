@@ -17,20 +17,7 @@ type ChainConfig struct {
 
 var (
 	ClientAddr = "127.0.0.1:8200"
-	NodeTable  = map[string]map[string]string{
-		"S0": {
-			"N0": "127.0.0.1:8010",
-			"N1": "127.0.0.1:8011",
-			"N2": "127.0.0.1:8012",
-			"N3": "127.0.0.1:8013",
-		},
-		"S1": {
-			"N0": "127.0.0.1:8014",
-			"N1": "127.0.0.1:8015",
-			"N2": "127.0.0.1:8016",
-			"N3": "127.0.0.1:8017",
-		},
-	}
+	NodeTable  = map[string]map[string]string{}
 
 	ShardTable = map[string]int{
 		"S0": 0,

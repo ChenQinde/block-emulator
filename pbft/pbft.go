@@ -28,7 +28,8 @@ var (
 
 type node struct {
 	//节点ID
-	nodeID string
+	nodeID  string
+	shardID string
 	//节点监听地址
 	addr     string
 	CurChain *chain.BlockChain
@@ -59,13 +60,18 @@ type Pbft struct {
 	height2Digest map[int]string
 	nodeTable     map[string]string
 	Stop          chan int
+	malicious_num int
 }
 
-func NewPBFT() *Pbft {
+func NewPBFT(shardID int, nodeID int) *Pbft {
 	config := params.Config
 	p := new(Pbft)
-	p.Node.nodeID = config.NodeID
-	p.Node.addr = params.NodeTable[config.ShardID][config.NodeID]
+	p.Node.nodeID = fmt.Sprintf("N%d", nodeID)
+	p.Node.shardID = fmt.Sprintf("S%d", shardID)
+	//p.Node.addr = params.NodeTable[config.ShardID][config.NodeID]
+	p.Node.addr = fmt.Sprintf("127.0.0.1:%d", 8201+shardID*100+nodeID)
+	config.ShardID = fmt.Sprintf("S%d", shardID)
+	config.NodeID = fmt.Sprintf("N%d", nodeID)
 
 	p.Node.CurChain, _ = chain.NewBlockChain(config)
 	p.sequenceID = p.Node.CurChain.CurrentBlock.Header.Number + 1
@@ -77,10 +83,20 @@ func NewPBFT() *Pbft {
 	p.height2Digest = make(map[int]string)
 	p.nodeTable = params.NodeTable[config.ShardID]
 	p.Stop = make(chan int, 0)
+	p.malicious_num = config.Malicious_num
 	return p
 }
 
 func NewLog(shardID string) {
+	cond, err := PathExists("./log")
+	if !cond {
+		err := os.Mkdir("./log", os.ModePerm)
+		if err != nil {
+			fmt.Printf("创建目录异常 -> %v\n", err)
+		} else {
+			fmt.Println("创建成功!")
+		}
+	}
 	csvFile, err := os.Create("./log/" + shardID + "_block.csv")
 	if err != nil {
 		log.Panic(err)
@@ -106,7 +122,16 @@ func NewLog(shardID string) {
 	queuelog.Write([]string{"timestamp", "queue_length"})
 	queuelog.Flush()
 }
-
+func PathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
 func (p *Pbft) handleRequest(data []byte) {
 	//切割消息，根据消息命令调用不同的功能
 	cmd, content := splitMessage(data)
@@ -128,8 +153,20 @@ func (p *Pbft) handleRequest(data []byte) {
 	}
 }
 
-//只有主节点可以调用
-//生成一个区块并发起共识
+// 向所有节点发送终止信号
+
+func sendStop() {
+	for shardID, nodes := range params.NodeTable {
+		for nodeID, addr := range nodes {
+			fmt.Printf("分片%v的主节点向节点%v发送终止运行消息\n", shardID, nodeID)
+			m := jointMessage(cStop, nil)
+			utils.TcpDial(m, addr)
+		}
+	}
+}
+
+// 只有主节点可以调用
+// 生成一个区块并发起共识
 func (p *Pbft) Propose() {
 	config := params.Config
 	for {
@@ -138,11 +175,14 @@ func (p *Pbft) Propose() {
 		if p.Node.nodeID == "N0" {
 			p.sequenceLock.Lock() //通过锁强制要求上一个区块commit完成新的区块才能被提出
 		}
-		p.propose()
+		if !p.propose() {
+			sendStop()
+			break
+		}
 	}
 }
 
-func (p *Pbft) propose() {
+func (p *Pbft) propose() bool {
 	r := &Request{}
 	r.Timestamp = time.Now().Unix()
 	r.Message.ID = getRandom()
@@ -152,30 +192,35 @@ func (p *Pbft) propose() {
 
 	r.Message.Content = encoded_block
 
+	txs_num := len(block.Transactions)
+	if txs_num == 0 {
+		return false
+	}
 	// //添加信息序号
 	// p.sequenceIDAdd()
 	//获取消息摘要
 	digest := getDigest(r)
-	fmt.Println("已将request存入临时消息池")
+	fmt.Printf("%s%s: 已将request存入临时消息池\n", p.Node.shardID, p.Node.nodeID)
 	//存入临时消息池
 	p.messagePool[digest] = r
 
 	//拼接成PrePrepare，准备发往follower节点
 	pp := PrePrepare{r, digest, p.sequenceID}
 	p.height2Digest[p.sequenceID] = digest
-	b, err := json.Marshal(pp)
+	tx_num, err := json.Marshal(pp)
 	if err != nil {
 		log.Panic(err)
 	}
-	fmt.Println("正在向其他节点进行进行PrePrepare广播 ...")
+	fmt.Printf("%s%s: 正在向其他节点进行进行PrePrepare广播 ...\n", p.Node.shardID, p.Node.nodeID)
 	//进行PrePrepare广播
-	p.broadcast(cPrePrepare, b)
-	fmt.Println("PrePrepare广播完成")
+	p.broadcast(cPrePrepare, tx_num)
+	fmt.Printf("%s%s: PrePrepare广播完成\n", p.Node.shardID, p.Node.nodeID)
+	return true
 }
 
-//处理预准备消息
+// 处理预准备消息
 func (p *Pbft) handlePrePrepare(content []byte) {
-	fmt.Println("本节点已接收到主节点发来的PrePrepare ...")
+	fmt.Printf("节点%s%s已接收到主节点发来的PrePrepare ...\n", p.Node.shardID, p.Node.nodeID)
 	//	//使用json解析出PrePrepare结构体
 	pp := new(PrePrepare)
 	err := json.Unmarshal(content, pp)
@@ -184,17 +229,17 @@ func (p *Pbft) handlePrePrepare(content []byte) {
 	}
 
 	if digest := getDigest(pp.RequestMessage); digest != pp.Digest {
-		fmt.Println("信息摘要对不上，拒绝进行prepare广播")
+		fmt.Printf("%s%s: 信息摘要对不上，拒绝进行prepare广播\n", p.Node.shardID, p.Node.nodeID)
 	} else if p.sequenceID != pp.SequenceID {
-		fmt.Println("消息序号对不上，拒绝进行prepare广播")
+		fmt.Printf("%s%s: 消息序号对不上，拒绝进行prepare广播\n", p.Node.shardID, p.Node.nodeID)
 	} else if !p.Node.CurChain.IsBlockValid(core.DecodeBlock(pp.RequestMessage.Message.Content)) {
 		// todo
-		fmt.Println("区块不合法，拒绝进行prepare广播")
+		fmt.Printf("%s%s: 区块不合法，拒绝进行prepare广播", p.Node.shardID, p.Node.nodeID)
 	} else {
 		// //序号赋值
 		// p.sequenceID = pp.SequenceID
 		//将信息存入临时消息池
-		fmt.Println("已将消息存入临时节点池")
+		fmt.Printf("节点%s%s已将消息存入临时节点池\n", p.Node.shardID, p.Node.nodeID)
 		p.messagePool[pp.Digest] = pp.RequestMessage
 		//拼接成Prepare
 		pre := Prepare{pp.Digest, pp.SequenceID, p.Node.nodeID}
@@ -203,13 +248,13 @@ func (p *Pbft) handlePrePrepare(content []byte) {
 			log.Panic(err)
 		}
 		//进行准备阶段的广播
-		fmt.Println("正在进行Prepare广播 ...")
+		fmt.Printf("节点%s%s正在进行Prepare广播 ...\n", p.Node.shardID, p.Node.nodeID)
 		p.broadcast(cPrepare, bPre)
-		fmt.Println("Prepare广播完成")
+		fmt.Printf("节点%s%sPrepare广播完成。\n", p.Node.shardID, p.Node.nodeID)
 	}
 }
 
-//处理准备消息
+// 处理准备消息
 func (p *Pbft) handlePrepare(content []byte) {
 	//使用json解析出Prepare结构体
 	pre := new(Prepare)
@@ -217,12 +262,12 @@ func (p *Pbft) handlePrepare(content []byte) {
 	if err != nil {
 		log.Panic(err)
 	}
-	fmt.Printf("本节点已接收到%s节点发来的Prepare ... \n", pre.NodeID)
+	fmt.Printf("节点%s%s已接收到%s节点发来的Prepare ... \n", p.Node.shardID, p.Node.nodeID, pre.NodeID)
 
 	if _, ok := p.messagePool[pre.Digest]; !ok {
-		fmt.Println("当前临时消息池无此摘要，拒绝执行commit广播")
+		fmt.Printf("%s%s当前临时消息池无此摘要，拒绝执行commit广播\n", p.Node.shardID, p.Node.nodeID)
 	} else if p.sequenceID != pre.SequenceID {
-		fmt.Println("消息序号对不上，拒绝执行commit广播")
+		fmt.Printf("%s%s消息序号对不上，拒绝执行commit广播\n", p.Node.shardID, p.Node.nodeID)
 	} else {
 		p.setPrePareConfirmMap(pre.Digest, pre.NodeID, true)
 		count := 0
@@ -232,15 +277,15 @@ func (p *Pbft) handlePrepare(content []byte) {
 		//因为主节点不会发送Prepare，所以不包含自己
 		specifiedCount := 0
 		if p.Node.nodeID == "N0" {
-			specifiedCount = 2 * malicious_num
+			specifiedCount = 2 * p.malicious_num
 		} else {
-			specifiedCount = 2*malicious_num - 1
+			specifiedCount = 2*p.malicious_num - 1
 		}
 		//如果节点至少收到了2f个prepare的消息（包括自己）,并且没有进行过commit广播，则进行commit广播
 		p.lock.Lock()
 		//获取消息源节点的公钥，用于数字签名验证
 		if count >= specifiedCount && !p.isCommitBordcast[pre.Digest] {
-			fmt.Println("本节点已收到至少2f个节点(包括本地节点)发来的Prepare信息 ...")
+			fmt.Printf("节点%s%s已收到至少2f个节点(包括本地节点)发来的Prepare信息 ...\n", p.Node.shardID, p.Node.nodeID)
 
 			c := Commit{pre.Digest, pre.SequenceID, p.Node.nodeID}
 			bc, err := json.Marshal(c)
@@ -248,16 +293,16 @@ func (p *Pbft) handlePrepare(content []byte) {
 				log.Panic(err)
 			}
 			//进行提交信息的广播
-			fmt.Println("正在进行commit广播")
+			fmt.Printf("节点%s%s正在进行commit广播\n", p.Node.shardID, p.Node.nodeID)
 			p.broadcast(cCommit, bc)
 			p.isCommitBordcast[pre.Digest] = true
-			fmt.Println("commit广播完成")
+			fmt.Printf("节点%s%scommit广播完成\n", p.Node.shardID, p.Node.nodeID)
 		}
 		p.lock.Unlock()
 	}
 }
 
-//处理提交确认消息
+// 处理提交确认消息
 func (p *Pbft) handleCommit(content []byte) {
 	//使用json解析出Commit结构体
 	c := new(Commit)
@@ -265,7 +310,7 @@ func (p *Pbft) handleCommit(content []byte) {
 	if err != nil {
 		log.Panic(err)
 	}
-	fmt.Printf("本节点已接收到%s节点发来的Commit ... \n", c.NodeID)
+	fmt.Printf("节点%s%s已接收到%s节点发来的Commit ... \n", p.Node.shardID, p.Node.nodeID, c.NodeID)
 
 	// if _, ok := p.prePareConfirmCount[c.Digest]; !ok {
 	// 	fmt.Println("当前prepare池无此摘要，拒绝将信息持久化到本地消息池")
@@ -280,12 +325,12 @@ func (p *Pbft) handleCommit(content []byte) {
 	}
 	//如果节点至少收到了2f+1个commit消息（包括自己）,并且节点没有回复过,并且已进行过commit广播，则提交信息至本地消息池，并reply成功标志至客户端！
 	p.lock.Lock()
-	require_cnt := malicious_num * 2
+	require_cnt := p.malicious_num * 2
 	if p.sequenceID != c.SequenceID {
 		require_cnt += 1
 	}
-	if count >= malicious_num*2 && !p.isReply[c.Digest] {
-		fmt.Println("本节点已收到至少2f + 1 个节点(包括本地节点)发来的Commit信息 ...")
+	if count >= p.malicious_num*2 && !p.isReply[c.Digest] {
+		fmt.Printf("节点%s%s已收到至少2f + 1 个节点(包括本地节点)发来的Commit信息 ...\n", p.Node.shardID, p.Node.nodeID)
 		//将消息信息，提交到本地消息池中！
 		if _, ok := p.messagePool[c.Digest]; !ok {
 			// 1. 如果本地消息池里没有这个消息，说明节点落后于其他节点，向主节点请求缺失的区块
@@ -298,7 +343,7 @@ func (p *Pbft) handleCommit(content []byte) {
 			encoded_block := r.Message.Content
 			block := core.DecodeBlock(encoded_block)
 			p.Node.CurChain.AddBlock(block)
-			fmt.Printf("编号为 %d 的区块已加入本地区块链！", p.sequenceID)
+			fmt.Printf("%s%s : 编号为 %d 的区块已加入本地区块链！\n", p.Node.shardID, p.Node.nodeID, p.sequenceID)
 			curBlock := p.Node.CurChain.CurrentBlock
 			fmt.Printf("curBlock: \n")
 			curBlock.PrintBlock()
@@ -324,13 +369,14 @@ func (p *Pbft) handleCommit(content []byte) {
 				s := fmt.Sprintf("%v %v %v %v %v %v", now, block.Header.Number, tx_total, tx_total-relayCount, tx_total-len(commit_ids), relayCount-tx_total+len(commit_ids))
 				blocklog.Write(strings.Split(s, " "))
 				blocklog.Flush()
+				// 暂时不与客户端通讯了
 				//主节点向客户端发送已确认上链的交易集
-				c, err := json.Marshal(commit_ids)
-				if err != nil {
-					log.Panic(err)
-				}
-				m := jointMessage(cReply, c)
-				utils.TcpDial(m, params.ClientAddr)
+				//c, err := json.Marshal(commit_ids)
+				//if err != nil {
+				//	log.Panic(err)
+				//}
+				//m := jointMessage(cReply, c)
+				//utils.TcpDial(m, params.ClientAddr)
 
 				queue_len := len(p.Node.CurChain.Tx_pool.Queue)
 				err = queuelog.Write([]string{fmt.Sprintf("%v", now), fmt.Sprintf("%v", queue_len)})
@@ -376,7 +422,7 @@ func (p *Pbft) handleRequestBlock(content []byte) {
 	if err != nil {
 		log.Panic(err)
 	}
-	fmt.Printf("本节点已接收到%s节点发来的 requestBlock ... \n", rb.NodeID)
+	fmt.Printf("节点%s%s已接收到%s节点发来的 requestBlock ... \n", p.Node.shardID, p.Node.nodeID, rb.NodeID)
 	blocks := make([]*core.Block, 0)
 	for id := rb.StartID; id <= rb.EndID; id++ {
 		if _, ok := p.height2Digest[id]; !ok {
@@ -416,10 +462,10 @@ func (p *Pbft) handleSendBlock(content []byte) {
 	if err != nil {
 		log.Panic(err)
 	}
-	fmt.Printf("本节点已接收到%s发来的%d到%d的区块 \n", sb.NodeID, sb.StartID, sb.EndID)
+	fmt.Printf("节点%s%s已接收到%s发来的%d到%d的区块 \n", p.Node.shardID, p.Node.nodeID, sb.NodeID, sb.StartID, sb.EndID)
 	for id := sb.StartID; id <= sb.EndID; id++ {
 		p.Node.CurChain.AddBlock(sb.Blocks[id-sb.StartID])
-		fmt.Printf("编号为 %d 的区块已加入本地区块链！", id)
+		fmt.Printf("%s%s : 编号为 %d 的区块已加入本地区块链！\n", p.Node.shardID, p.Node.nodeID, id)
 		curBlock := p.Node.CurChain.CurrentBlock
 		fmt.Printf("curBlock: \n")
 		curBlock.PrintBlock()
@@ -428,18 +474,19 @@ func (p *Pbft) handleSendBlock(content []byte) {
 	p.requestLock.Unlock()
 }
 
-//向除自己外的其他节点进行广播
+// 向除自己外的其他节点进行广播
 func (p *Pbft) broadcast(cmd command, content []byte) {
 	for i := range p.nodeTable {
 		if i == p.Node.nodeID {
 			continue
 		}
+		//fmt.Printf("%s : The i is %s", p.Node.shardID, i)
 		message := jointMessage(cmd, content)
 		go utils.TcpDial(message, p.nodeTable[i])
 	}
 }
 
-//为多重映射开辟赋值
+// 为多重映射开辟赋值
 func (p *Pbft) setPrePareConfirmMap(val, val2 string, b bool) {
 	if _, ok := p.prePareConfirmCount[val]; !ok {
 		p.prePareConfirmCount[val] = make(map[string]bool)
@@ -447,7 +494,7 @@ func (p *Pbft) setPrePareConfirmMap(val, val2 string, b bool) {
 	p.prePareConfirmCount[val][val2] = b
 }
 
-//为多重映射开辟赋值
+// 为多重映射开辟赋值
 func (p *Pbft) setCommitConfirmMap(val, val2 string, b bool) {
 	if _, ok := p.commitConfirmCount[val]; !ok {
 		p.commitConfirmCount[val] = make(map[string]bool)
@@ -455,7 +502,7 @@ func (p *Pbft) setCommitConfirmMap(val, val2 string, b bool) {
 	p.commitConfirmCount[val][val2] = b
 }
 
-//返回一个十位数的随机数，作为msgid
+// 返回一个十位数的随机数，作为msgid
 func getRandom() int {
 	x := big.NewInt(10000000000)
 	for {
@@ -475,7 +522,7 @@ func (p *Pbft) TryRelay() {
 	for {
 		time.Sleep(time.Duration(config.Relay_interval) * time.Millisecond)
 		for k, v := range params.NodeTable {
-			if k == config.ShardID {
+			if k == p.Node.shardID {
 				continue
 			}
 			if txs, isEnough := p.Node.CurChain.Tx_pool.FetchRelayTxs(k); isEnough {
@@ -505,6 +552,6 @@ func (p *Pbft) handleRelay(content []byte) {
 	if err != nil {
 		log.Panic(err)
 	}
-	fmt.Printf("本节点已接收到分片%v发来的relay交易 \n", relay.ShardID)
+	fmt.Printf("节点%s已接收到分片%v发来的relay交易 \n", p.Node.nodeID, relay.ShardID)
 	p.Node.CurChain.Tx_pool.AddTxs(relay.Txs)
 }

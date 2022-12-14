@@ -101,7 +101,7 @@ func (bc *BlockChain) GenerateBlock() *core.Block {
 		Number:     bc.CurrentBlock.Header.Number + 1,
 		Time:       uint64(time.Now().Unix()),
 	}
-
+	//fmt.Printf("GenerateBlock txs length is %d\n", len(txs))
 	block := core.NewBlock(blockHeader, txs)
 
 	mpt_tx := bc.buildTreeOfTxs(txs)
@@ -235,7 +235,7 @@ func GenerateTxs(bc *BlockChain) {
 	bc.preExecute(txs, bc)
 }
 
-func (bc *BlockChain) preExecute(txs []*core.Transaction, chain *BlockChain) *trie.Trie{
+func (bc *BlockChain) preExecute(txs []*core.Transaction, chain *BlockChain) *trie.Trie {
 	// stateTree, err := chain.Storage.GetStatusTree()
 	// if err != nil {
 	// 	log.Panic()
