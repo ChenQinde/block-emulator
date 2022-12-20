@@ -61,10 +61,21 @@ type Pbft struct {
 	nodeTable     map[string]string
 	Stop          chan int
 	malicious_num int
+	// 建立block、queue_length以及transaction的日记文件，也是只有主节点使用
+	blocklog *csv.Writer
+	txlog    *csv.Writer
+	queuelog *csv.Writer
 }
 
 func NewPBFT(shardID int, nodeID int) *Pbft {
-	config := params.Config
+	config := params.ChainConfig{}
+	config.ChainID = params.Config.ChainID
+	config.Block_interval = params.Config.Block_interval
+	config.MaxBlockSize = params.Config.MaxBlockSize
+	config.MaxRelayBlockSize = params.Config.MaxRelayBlockSize
+	config.MinRelayBlockSize = params.Config.MinRelayBlockSize
+	config.Inject_speed = params.Config.Inject_speed
+	config.Relay_interval = params.Config.Relay_interval
 	p := new(Pbft)
 	p.Node.nodeID = fmt.Sprintf("N%d", nodeID)
 	p.Node.shardID = fmt.Sprintf("S%d", shardID)
@@ -72,8 +83,9 @@ func NewPBFT(shardID int, nodeID int) *Pbft {
 	p.Node.addr = fmt.Sprintf("127.0.0.1:%d", 8201+shardID*100+nodeID)
 	config.ShardID = fmt.Sprintf("S%d", shardID)
 	config.NodeID = fmt.Sprintf("N%d", nodeID)
+	//fmt.Println("config.NodeID ", config.NodeID)
 
-	p.Node.CurChain, _ = chain.NewBlockChain(config)
+	p.Node.CurChain, _ = chain.NewBlockChain(&config)
 	p.sequenceID = p.Node.CurChain.CurrentBlock.Header.Number + 1
 	p.messagePool = make(map[string]*Request)
 	p.prePareConfirmCount = make(map[string]map[string]bool)
@@ -87,7 +99,7 @@ func NewPBFT(shardID int, nodeID int) *Pbft {
 	return p
 }
 
-func NewLog(shardID string) {
+func NewLog(p *Pbft) {
 	cond, err := PathExists("./log")
 	if !cond {
 		err := os.Mkdir("./log", os.ModePerm)
@@ -97,30 +109,30 @@ func NewLog(shardID string) {
 			fmt.Println("创建成功!")
 		}
 	}
-	csvFile, err := os.Create("./log/" + shardID + "_block.csv")
+	csvFile, err := os.Create("./log/" + p.Node.shardID + "_block.csv")
 	if err != nil {
 		log.Panic(err)
 	}
 	// defer csvFile.Close()
-	blocklog = csv.NewWriter(csvFile)
-	blocklog.Write([]string{"timestamp", "blockHeight", "tx_total", "tx_normal", "tx_relay_first_half", "tx_relay_second_half"})
-	blocklog.Flush()
+	p.blocklog = csv.NewWriter(csvFile)
+	p.blocklog.Write([]string{"timestamp", "blockHeight", "tx_total", "tx_normal", "tx_relay_first_half", "tx_relay_second_half"})
+	p.blocklog.Flush()
 
-	csvFile, err = os.Create("./log/" + shardID + "_transaction.csv")
+	csvFile, err = os.Create("./log/" + p.Node.shardID + "_transaction.csv")
 	if err != nil {
 		log.Panic(err)
 	}
-	txlog = csv.NewWriter(csvFile)
-	txlog.Write([]string{"txid", "blockHeight", "request_time", "commit_time", "delay"})
-	txlog.Flush()
+	p.txlog = csv.NewWriter(csvFile)
+	p.txlog.Write([]string{"txid", "blockHeight", "request_time", "commit_time", "delay"})
+	p.txlog.Flush()
 
-	csvFile, err = os.Create("./log/" + shardID + "_queue_length.csv")
+	csvFile, err = os.Create("./log/" + p.Node.shardID + "_queue_length.csv")
 	if err != nil {
 		log.Panic(err)
 	}
-	queuelog = csv.NewWriter(csvFile)
-	queuelog.Write([]string{"timestamp", "queue_length"})
-	queuelog.Flush()
+	p.queuelog = csv.NewWriter(csvFile)
+	p.queuelog.Write([]string{"timestamp", "queue_length"})
+	p.queuelog.Flush()
 }
 func PathExists(path string) (bool, error) {
 	_, err := os.Stat(path)
@@ -175,10 +187,7 @@ func (p *Pbft) Propose() {
 		if p.Node.nodeID == "N0" {
 			p.sequenceLock.Lock() //通过锁强制要求上一个区块commit完成新的区块才能被提出
 		}
-		if !p.propose() {
-			sendStop()
-			break
-		}
+		p.propose()
 	}
 }
 
@@ -192,10 +201,6 @@ func (p *Pbft) propose() bool {
 
 	r.Message.Content = encoded_block
 
-	txs_num := len(block.Transactions)
-	if txs_num == 0 {
-		return false
-	}
 	// //添加信息序号
 	// p.sequenceIDAdd()
 	//获取消息摘要
@@ -215,7 +220,7 @@ func (p *Pbft) propose() bool {
 	//进行PrePrepare广播
 	p.broadcast(cPrePrepare, tx_num)
 	fmt.Printf("%s%s: PrePrepare广播完成\n", p.Node.shardID, p.Node.nodeID)
-	return true
+	return false
 }
 
 // 处理预准备消息
@@ -354,36 +359,39 @@ func (p *Pbft) handleCommit(content []byte) {
 				relayCount := 0
 				//已上链交易集
 				commit_ids := []int{}
+				//fmt.Println("block Transactions is ", block.Transactions)
 				for _, v := range block.Transactions {
-					//若交易接收者属于本分片才加入已上链交易集
-					if params.ShardTable[params.Config.ShardID] == utils.Addr2Shard(hex.EncodeToString(v.Recipient)) {
+					// 若交易接收者属于本分片才加入已上链交易集
+					//fmt.Println("Addr2Shard is ", utils.Addr2Shard(hex.EncodeToString(v.Recipient)), hex.EncodeToString(v.Recipient))
+					if params.ShardTable[p.Node.shardID] == utils.Addr2Shard(hex.EncodeToString(v.Recipient)) {
 						commit_ids = append(commit_ids, v.Id)
 						s := fmt.Sprintf("%v %v %v %v %v", v.Id, block.Header.Number, v.RequestTime, now, now-v.RequestTime)
-						txlog.Write(strings.Split(s, " "))
+						p.txlog.Write(strings.Split(s, " "))
 					}
 					if utils.Addr2Shard(hex.EncodeToString(v.Sender)) != utils.Addr2Shard(hex.EncodeToString(v.Recipient)) {
 						relayCount++
 					}
 				}
-				txlog.Flush()
+				p.txlog.Flush()
 				s := fmt.Sprintf("%v %v %v %v %v %v", now, block.Header.Number, tx_total, tx_total-relayCount, tx_total-len(commit_ids), relayCount-tx_total+len(commit_ids))
-				blocklog.Write(strings.Split(s, " "))
-				blocklog.Flush()
+				p.blocklog.Write(strings.Split(s, " "))
+				p.blocklog.Flush()
 				// 暂时不与客户端通讯了
 				//主节点向客户端发送已确认上链的交易集
-				//c, err := json.Marshal(commit_ids)
-				//if err != nil {
-				//	log.Panic(err)
-				//}
-				//m := jointMessage(cReply, c)
-				//utils.TcpDial(m, params.ClientAddr)
-
-				queue_len := len(p.Node.CurChain.Tx_pool.Queue)
-				err = queuelog.Write([]string{fmt.Sprintf("%v", now), fmt.Sprintf("%v", queue_len)})
+				fmt.Println("commit_ids is ", commit_ids)
+				c, err := json.Marshal(commit_ids)
 				if err != nil {
 					log.Panic(err)
 				}
-				queuelog.Flush()
+				m := jointMessage(cReply, c)
+				utils.TcpDial(m, params.ClientAddr)
+
+				queue_len := len(p.Node.CurChain.Tx_pool.Queue)
+				err = p.queuelog.Write([]string{fmt.Sprintf("%v", now), fmt.Sprintf("%v", queue_len)})
+				if err != nil {
+					log.Panic(err)
+				}
+				p.queuelog.Flush()
 			}
 			p.isReply[c.Digest] = true
 
@@ -536,7 +544,7 @@ func (p *Pbft) TryRelay() {
 					log.Panic(err)
 				}
 
-				fmt.Printf("正在向分片%v的主节点发送relay交易\n", k)
+				fmt.Printf("%s%s正在向分片%v的主节点发送relay交易\n", p.Node.shardID, p.Node.nodeID, k)
 				message := jointMessage(cRelay, bc)
 				go utils.TcpDial(message, target_leader)
 			} else {

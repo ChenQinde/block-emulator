@@ -29,7 +29,7 @@ import (
 
 // }
 
-//节点使用的tcp监听
+// 节点使用的tcp监听
 func (p *Pbft) TcpListen() {
 	listen, err := net.Listen("tcp", p.Node.addr)
 	if err != nil {
@@ -37,6 +37,7 @@ func (p *Pbft) TcpListen() {
 	}
 	fmt.Printf("节点开启监听，地址：%s\n", p.Node.addr)
 	defer listen.Close()
+	//fmt.Printf("tcp0 p.Node.nodeID is %s || curchain is : %s\n", p.Node.nodeID, p.Node.CurChain.ChainConfig.NodeID)
 
 	for {
 		conn, err := listen.Accept()
@@ -47,6 +48,7 @@ func (p *Pbft) TcpListen() {
 		if err != nil {
 			log.Panic(err)
 		}
+		//fmt.Printf("tcp1 p.Node.nodeID is %s || curchain is : %s\n", p.Node.nodeID, p.Node.CurChain.ChainConfig.NodeID)
 		p.handleRequest(b)
 	}
 

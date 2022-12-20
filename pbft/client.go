@@ -33,7 +33,8 @@ func RunClient(path string) {
 				if !finished[id] {
 					finished[id] = true
 					finished_cnt += 1
-					//fmt.Printf("finish nums is %d\n", finished_cnt)
+					fmt.Printf("id is %d\n", id)
+					fmt.Printf("finish nums is %d\n", finished_cnt)
 					if finished_cnt == tx_cnt {
 						all_finish <- 1
 						break

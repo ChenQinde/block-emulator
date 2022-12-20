@@ -41,6 +41,7 @@ func build() {
 	flag.BoolVarP(&isClient, "client", "c", false, "whether this node is a client")
 
 	flag.Parse()
+
 	if isClient {
 		if testFile == "" {
 			log.Panic("参数不正确！")
@@ -55,6 +56,7 @@ func build() {
 	config.Malicious_num = int((node_num - 1) / 3)
 	config.Shard_num = int(shard_num)
 	config.Path = testFile
+	config.MaxRelayBlockSize = 10
 
 	newShards(shard_num, node_num)
 	fmt.Println("开始读取交易数据！")

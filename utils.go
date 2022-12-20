@@ -14,6 +14,8 @@ var shards []*shard.Shard
 func newShards(shardNum int, node_num int) {
 	AddShardNodeToConfig(shardNum, node_num)
 	for shardID := 0; shardID < shardNum; shardID++ {
+		params.ShardTable[fmt.Sprintf("S%d", shardID)] = shardID
+		params.ShardTableInt2Str[shardID] = fmt.Sprintf("S%d", shardID)
 		sigshard := shard.NewShard(shardID, node_num)
 		shards = append(shards, sigshard)
 	}
@@ -57,7 +59,7 @@ func N0startReadTX(shardNum int) {
 	for shardID := 0; shardID < shardNum; shardID++ {
 		config := params.Config
 		node := shards[shardID].Nodes[0]
-		pbft.NewLog(fmt.Sprintf("S%d", shardID))
+		pbft.NewLog(node.P)
 		fmt.Printf("The path is %s\n", config.Path)
 		txs := shard.LoadTxsWithShard(config.Path, params.ShardTable[fmt.Sprintf("S%d", shardID)])
 		go shard.InjectTxs2Shard(node.P.Node.CurChain.Tx_pool, txs)

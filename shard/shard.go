@@ -97,7 +97,7 @@ func LoadTxsWithShard(path string, sid int) []*core.Transaction {
 		}
 		txid += 1
 	}
-	fmt.Printf("%d\n", len(txs))
+	fmt.Printf("txs length is %d\n", len(txs))
 	txs[0].PrintTx()
 	return txs
 }

@@ -3,6 +3,7 @@ package core
 import (
 	"blockEmulator/params"
 	"blockEmulator/utils"
+	"fmt"
 	"sync"
 )
 
@@ -65,6 +66,7 @@ func (pool *Tx_pool) AddRelayTx(tx *Transaction, shardID string) {
 func (pool *Tx_pool) FetchRelayTxs(shardID string) (txs []*Transaction, isEnough bool) {
 	config := params.Config
 	pool.lock.Lock()
+	fmt.Println("Pool relay length :", len(pool.Relay_Pools[shardID]))
 	if queue, ok := pool.Relay_Pools[shardID]; !ok {
 		pool.lock.Unlock()
 		return nil, false
