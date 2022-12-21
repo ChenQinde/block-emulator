@@ -40,8 +40,10 @@ func Test_graph() {
 	h.NetGraph.AddEdge(c, d)
 	h.NetGraph.AddEdge(c, d)
 	h.NetGraph.AddEdge(c, d)
-	h.Init_Partition()
-	h.PrintCLPA()
-	h.CLPA_Partition()
-	h.PrintCLPA()
+	err := h.Stable_Init_Partition()
+	if err == nil {
+		h.PrintCLPA()
+		h.CLPA_Partition()
+		h.PrintCLPA()
+	}
 }

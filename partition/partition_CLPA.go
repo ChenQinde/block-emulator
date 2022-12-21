@@ -1,6 +1,7 @@
 package partition
 
 import (
+	"errors"
 	"log"
 	"strconv"
 )
@@ -8,7 +9,7 @@ import (
 // CLPA算法状态，state of constraint label propagation algorithm
 type CLPAState struct {
 	NetGraph          Graph          // 需运行CLPA算法的图
-	PartitionMap      map[Vertex]int // 记录分片信息的 map
+	PartitionMap      map[Vertex]int // 记录分片信息的 map，某个节点属于哪个分片
 	Edges2Shard       []int          // Shard 相邻接的边数，对应论文中的 total weight of edges associated with label k
 	VertexsNumInShard []int          // Shard 内节点的数目
 	weightPenalty     float64        // 权重惩罚，对应论文中的 beta
@@ -96,6 +97,25 @@ func (cs *CLPAState) Init_Partition() {
 	}
 	// 账户划分完成之后，计算 Edges2Shard
 	cs.computeEdges2Shard()
+}
+
+// 不会出现空分片的初始化划分
+func (cs *CLPAState) Stable_Init_Partition() error {
+	// 设置划分默认参数
+	cs.Set_Parameters(0.5, 100, 2)
+	if cs.shardNum > len(cs.NetGraph.vertexSet) {
+		return errors.New("too many shards, number of shards should be less than nodes. ")
+	}
+	cs.VertexsNumInShard = make([]int, cs.shardNum)
+	cs.PartitionMap = make(map[Vertex]int)
+	cnt := 0
+	for v := range cs.NetGraph.vertexSet {
+		cs.PartitionMap[v] = int(cnt) % cs.shardNum
+		cs.VertexsNumInShard[cs.PartitionMap[v]] += 1
+		cnt++
+	}
+	cs.computeEdges2Shard()
+	return nil
 }
 
 // 计算 将节点 v 放入 uShard 所产生的 score
