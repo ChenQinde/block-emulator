@@ -54,7 +54,7 @@ func Test_shard() {
 	}
 
 	if _, ok := params.NodeTable[shardID][nodeID]; ok {
-		node = shard.NewNode()
+		node = shard.NewNode(0, 0)
 	} else {
 		log.Fatal("无此节点编号！")
 	}
