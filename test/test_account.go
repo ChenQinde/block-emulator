@@ -1,6 +1,7 @@
 package test
 
 import (
+	"blockEmulator/account"
 	"blockEmulator/core"
 	"fmt"
 )
@@ -10,4 +11,30 @@ func Test_account() {
 		address := core.GenerateAddress()
 		fmt.Printf("%v\n", address)
 	}
+}
+
+func TestAccountAddandGet() {
+	account.Init("S0", "NO")
+	account1 := account.AddAccount()
+	fmt.Println("account1 address :", account1.Address)
+	account2 := account.GetAccount(account1.Address)
+	fmt.Println("account2 address :", account2.Address)
+}
+
+func TestAccountGetAll() {
+	account.Init("S0", "N0")
+	accounts := account.GetAllAccount()
+	fmt.Println(len(accounts))
+	account.AddAccount()
+	accounts = account.GetAllAccount()
+	fmt.Println(len(accounts))
+}
+
+func TestGetAccountState() {
+	account.Init("S0", "N3")
+	fmt.Println(account.GetAccountState("0x48c52ecd7aed4ec0816eb6f79e2be23e9a50a0c7").Balance)
+}
+
+func TestGenerateTransaction() {
+	account.GenerateTransaction(5, 100, "S0", "N0")
 }
