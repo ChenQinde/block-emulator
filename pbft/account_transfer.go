@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 
 	"github.com/boltdb/bolt"
 )
@@ -39,11 +40,11 @@ func (atmsg *AccountTransferMsg) MsgEncode() ([]byte, error) {
 	if err != nil {
 		return content, err
 	}
-	return jointMessage(cAccountTransfer, content), nil
+	return jointMessage(cHandleAccountTransfer, content), nil
 }
 
 // 向除自己外的其他节点进行广播(本分片) （烨彤的代码）
-func (p *AtmPbft) broadcastInShard(msg []byte) {
+func (p *Pbft) broadcastInShard(msg []byte) {
 	for i := range p.nodeTable {
 		if i == p.Node.nodeID {
 			continue
@@ -53,7 +54,7 @@ func (p *AtmPbft) broadcastInShard(msg []byte) {
 }
 
 // 向所有主节点进行广播 （烨彤的代码）
-func (p *AtmPbft) broadcastToMain(msg []byte) {
+func (p *Pbft) broadcastToMain(msg []byte) {
 	for i, node := range params.NodeTable {
 		if i == params.Config.ShardID {
 			continue
@@ -64,7 +65,7 @@ func (p *AtmPbft) broadcastToMain(msg []byte) {
 }
 
 // 在一个本地数据库中插入一个 account
-func (p *AtmPbft) insertAccount_forLocal(ac account.Account) error {
+func (p *Pbft) insertAccount_forLocal(ac account.Account) error {
 	dbpath := "./record/" + p.Node.shardID + "_" + p.Node.nodeID + "_" + "blockchain_db"
 	db, err := bolt.Open(dbpath, 0600, nil)
 	defer db.Close()
@@ -84,12 +85,12 @@ func (p *AtmPbft) insertAccount_forLocal(ac account.Account) error {
 }
 
 // 从本地获取 账户数据，package account 中有 GetAccount 方法了
-func (p *AtmPbft) getAccount_fromLocal(addr string) account.Account {
+func (p *Pbft) getAccount_fromLocal(addr string) account.Account {
 	return *account.GetAccount(addr)
 }
 
 // 发送 AccountTransferMsg，一般来说是 Worker 分片调用
-func (p *AtmPbft) send_AccountTransferMsg(desShard int, atmsg AccountTransferMsg) error {
+func (p *Pbft) send_AccountTransferMsg(desShard int, atmsg AccountTransferMsg) error {
 	msg, err := atmsg.MsgEncode()
 	if err != nil {
 		return err
@@ -99,7 +100,7 @@ func (p *AtmPbft) send_AccountTransferMsg(desShard int, atmsg AccountTransferMsg
 }
 
 // 发送 PartitionMsg_FromMtoW，一般来说是 Main 分片调用
-func (p *AtmPbft) send_PartitionMsg_FromMtoW(pmfw PartitionMsg_FromMtoW) error {
+func (p *Pbft) send_PartitionMsg_FromMtoW(pmfw PartitionMsg_FromMtoW) error {
 	msg, err := pmfw.MsgEncode()
 	if err != nil {
 		return err
@@ -109,11 +110,12 @@ func (p *AtmPbft) send_PartitionMsg_FromMtoW(pmfw PartitionMsg_FromMtoW) error {
 }
 
 // 获取 AccountTransferMsg
-func (p *AtmPbft) generate_AccountTransferMsg(oldMap, newMap map[string]int) []AccountTransferMsg {
-	atmsg := make([]AccountTransferMsg, p.shardNums)
-	shardID := p.shardID
+func (p *Pbft) generate_AccountTransferMsg(oldMap, newMap map[string]int) []AccountTransferMsg {
+	shardNum := p.Node.CurChain.ChainConfig.Shard_num
+	atmsg := make([]AccountTransferMsg, shardNum)
+	shardID, _ := strconv.Atoi(p.Node.shardID[1:])
 	// 数组中第 i 个 message 指的是发送给第 i 个分片的账户信息
-	for i := 0; i < p.shardNums; i++ {
+	for i := 0; i < shardNum; i++ {
 		atmsg[i].FromShardID = shardID
 		atmsg[i].ToShardID = i
 	}
@@ -130,19 +132,20 @@ func (p *AtmPbft) generate_AccountTransferMsg(oldMap, newMap map[string]int) []A
 }
 
 // 处理 AccountTransferMsg
-func (p *AtmPbft) handle_AccountTransferMsg(rawMsg []byte) {
+func (p *Pbft) handle_AccountTransferMsg(rawMsg []byte) {
 	atmsg := new(AccountTransferMsg)
+	shardID, _ := strconv.Atoi(p.Node.shardID[1:])
 	err := json.Unmarshal(rawMsg, atmsg)
 	if err != nil {
 		log.Panic(err)
 		return
 	}
-	if atmsg.ToShardID != p.shardID {
+	if atmsg.ToShardID != shardID {
 		return
 	}
 
 	// 如果自己为 该分片 主节点，将消息发向本分片的其他节点
-	if p.isMainNode {
+	if p.mainNode == p.Node.nodeID {
 		Msg2shard, err := atmsg.MsgEncode()
 		if err != nil {
 			log.Panic(err)
@@ -158,8 +161,9 @@ func (p *AtmPbft) handle_AccountTransferMsg(rawMsg []byte) {
 }
 
 // 处理 Main 分片发来的 账户迁移信息
-func (p *AtmPbft) handle_PartitionMsg_FromMtoW(rawMsg []byte) {
+func (p *Pbft) handle_PartitionMsg_FromMtoW(rawMsg []byte) {
 	pmsg := new(PartitionMsg_FromMtoW)
+	shardID, _ := strconv.Atoi(p.Node.shardID[1:])
 	err := json.Unmarshal(rawMsg, pmsg)
 	if err != nil {
 		log.Panic(err)
@@ -169,13 +173,13 @@ func (p *AtmPbft) handle_PartitionMsg_FromMtoW(rawMsg []byte) {
 	oldMap := p.PartitionMap
 	atmsgList := p.generate_AccountTransferMsg(oldMap, pmsg.PartitionMap)
 	for desShard, atmsg := range atmsgList {
-		if desShard != p.shardID {
+		if desShard != shardID {
 			p.send_AccountTransferMsg(desShard, atmsg)
 		}
 	}
 	// 然后处理归属于本分片的新账户
 	for _, ac := range pmsg.AcountsInserted {
-		if pmsg.PartitionMap[ac.Address] == p.shardID {
+		if pmsg.PartitionMap[ac.Address] == shardID {
 			// 加入本地的数据库中
 			p.insertAccount_forLocal(ac)
 		}

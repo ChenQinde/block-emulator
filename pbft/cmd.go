@@ -88,8 +88,8 @@ const (
 
 	cStop command = "stop"
 
-	cPartitionMsg    command = "partitionMsg"
-	cAccountTransfer command = "accountTransferMsg"
+	cPartitionMsg          command = "partitionMsg"
+	cHandleAccountTransfer command = "accountTransfer"
 )
 
 // 默认前十二位为命令名称

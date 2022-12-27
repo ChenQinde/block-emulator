@@ -65,6 +65,10 @@ type Pbft struct {
 	blocklog *csv.Writer
 	txlog    *csv.Writer
 	queuelog *csv.Writer
+
+	// 以下为账户划分算法新增：
+	mainNode     string         // 判断是否为pbft主节点
+	PartitionMap map[string]int // 划分表
 }
 
 func NewPBFT(shardID int, nodeID int) *Pbft {
@@ -96,6 +100,9 @@ func NewPBFT(shardID int, nodeID int) *Pbft {
 	p.nodeTable = params.NodeTable[config.ShardID]
 	p.Stop = make(chan int, 0)
 	p.malicious_num = config.Malicious_num
+
+	p.mainNode = "N0"
+	p.PartitionMap = make(map[string]int)
 	return p
 }
 
@@ -162,6 +169,12 @@ func (p *Pbft) handleRequest(data []byte) {
 		p.handleRelay(content)
 	case cStop:
 		p.Stop <- 1
+
+	// 以下为 账户迁移 相关代码
+	case cHandleAccountTransfer:
+		p.handle_AccountTransferMsg(content)
+	case cPartitionMsg:
+		p.handle_PartitionMsg_FromMtoW(content)
 	}
 }
 
