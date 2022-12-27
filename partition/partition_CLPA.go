@@ -3,7 +3,6 @@ package partition
 import (
 	"errors"
 	"log"
-	"math/rand"
 	"strconv"
 )
 
@@ -17,28 +16,6 @@ type CLPAState struct {
 	minEdges2Shard    int            // 最少的 Shard 邻接边数，最小的 total weight of edges associated with label k
 	maxIterations     int            // 最大迭代次数，constraint，对应论文中的\tau
 	shardNum          int            // 分片数目
-}
-
-// 加入节点，需要将它默认归到一个分片中
-func (cs *CLPAState) AddVertex(v Vertex) {
-	cs.NetGraph.AddVertex(v)
-	cs.PartitionMap[v] = rand.Intn(cs.shardNum)
-	cs.VertexsNumInShard[cs.PartitionMap[v]] += 1 // 此处可以批处理完之后再修改 VertexsNumInShard 参数
-	// 当然也可以不处理，因为 CLPA 算法运行前会更新最新的参数
-}
-
-// 加入边，需要将它的端点（如果不存在）默认归到一个分片中
-func (cs *CLPAState) AddEdge(u, v Vertex) {
-	// 如果没有点，则增加边，权恒定为 1
-	if _, ok := cs.NetGraph.vertexSet[u]; !ok {
-		cs.AddVertex(u)
-	}
-	if _, ok := cs.NetGraph.vertexSet[v]; !ok {
-		cs.AddVertex(v)
-	}
-	cs.NetGraph.AddEdge(u, v)
-	// 可以批处理完之后再修改 Edges2Shard 等参数
-	// 当然也可以不处理，因为 CLPA 算法运行前会更新最新的参数
 }
 
 // 复制CLPA状态
@@ -97,17 +74,16 @@ func (cs *CLPAState) computeEdges2Shard() {
 }
 
 // 设置参数
-func (cs *CLPAState) Init_CLPAState(wp float64, mIter, sn int) {
+func (cs *CLPAState) Set_Parameters(wp float64, mIter, sn int) {
 	cs.weightPenalty = wp
 	cs.maxIterations = mIter
 	cs.shardNum = sn
-	cs.VertexsNumInShard = make([]int, cs.shardNum)
-	cs.PartitionMap = make(map[Vertex]int)
 }
 
 // 初始化划分，使用节点地址的尾数划分，应该保证初始化的时候不会出现空分片
 func (cs *CLPAState) Init_Partition() {
 	// 设置划分默认参数
+	cs.Set_Parameters(0.5, 100, 2)
 	cs.VertexsNumInShard = make([]int, cs.shardNum)
 	cs.PartitionMap = make(map[Vertex]int)
 	for v := range cs.NetGraph.vertexSet {
@@ -119,12 +95,14 @@ func (cs *CLPAState) Init_Partition() {
 		cs.PartitionMap[v] = int(num) % cs.shardNum
 		cs.VertexsNumInShard[cs.PartitionMap[v]] += 1
 	}
-	cs.computeEdges2Shard() // 删掉会更快一点，但是这样方便输出（毕竟只执行一次Init，也快不了多少）
+	// 账户划分完成之后，计算 Edges2Shard
+	cs.computeEdges2Shard()
 }
 
 // 不会出现空分片的初始化划分
 func (cs *CLPAState) Stable_Init_Partition() error {
 	// 设置划分默认参数
+	cs.Set_Parameters(0.5, 100, 2)
 	if cs.shardNum > len(cs.NetGraph.vertexSet) {
 		return errors.New("too many shards, number of shards should be less than nodes. ")
 	}
@@ -136,7 +114,7 @@ func (cs *CLPAState) Stable_Init_Partition() error {
 		cs.VertexsNumInShard[cs.PartitionMap[v]] += 1
 		cnt++
 	}
-	cs.computeEdges2Shard() // 删掉会更快一点，但是这样方便输出（毕竟只执行一次Init，也快不了多少）
+	cs.computeEdges2Shard()
 	return nil
 }
 
@@ -158,7 +136,6 @@ func (cs *CLPAState) getShard_score(v Vertex, uShard int) float64 {
 
 // CLPA 划分算法
 func (cs *CLPAState) CLPA_Partition() {
-	cs.computeEdges2Shard()
 	for iter := 1; iter < cs.maxIterations; iter += 1 { // 第一层循环控制算法次数，constraint
 		stop := true // stop 控制算法是否提前停止
 		for v := range cs.NetGraph.vertexSet {
