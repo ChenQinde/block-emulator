@@ -1,6 +1,9 @@
 package partition
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/gob"
 	"errors"
 	"log"
 	"math/rand"
@@ -17,6 +20,24 @@ type CLPAState struct {
 	minEdges2Shard    int            // 最少的 Shard 邻接边数，最小的 total weight of edges associated with label k
 	maxIterations     int            // 最大迭代次数，constraint，对应论文中的\tau
 	shardNum          int            // 分片数目
+	GraphHash         []byte
+}
+
+func (graph *CLPAState) Hash() []byte {
+	hash := sha256.Sum256(graph.Encode())
+	return hash[:]
+}
+
+func (graph *CLPAState) Encode() []byte {
+	var buff bytes.Buffer
+
+	enc := gob.NewEncoder(&buff)
+	err := enc.Encode(graph)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	return buff.Bytes()
 }
 
 // 加入节点，需要将它默认归到一个分片中
@@ -30,10 +51,10 @@ func (cs *CLPAState) AddVertex(v Vertex) {
 // 加入边，需要将它的端点（如果不存在）默认归到一个分片中
 func (cs *CLPAState) AddEdge(u, v Vertex) {
 	// 如果没有点，则增加边，权恒定为 1
-	if _, ok := cs.NetGraph.vertexSet[u]; !ok {
+	if _, ok := cs.NetGraph.VertexSet[u]; !ok {
 		cs.AddVertex(u)
 	}
-	if _, ok := cs.NetGraph.vertexSet[v]; !ok {
+	if _, ok := cs.NetGraph.VertexSet[v]; !ok {
 		cs.AddVertex(v)
 	}
 	cs.NetGraph.AddEdge(u, v)
@@ -62,7 +83,7 @@ func (cs *CLPAState) PrintCLPA() {
 	cs.NetGraph.PrintGraph()
 	println(cs.minEdges2Shard)
 	for v, item := range cs.PartitionMap {
-		print(v.addr, " ", item, "\t")
+		print(v.Addr, " ", item, "\t")
 	}
 	for _, item := range cs.Edges2Shard {
 		print(item, " ")
@@ -75,7 +96,7 @@ func (cs *CLPAState) computeEdges2Shard() {
 	cs.Edges2Shard = make([]int, cs.shardNum)
 	cs.minEdges2Shard = 0x7fffffff // INT_MAX
 
-	for v, lst := range cs.NetGraph.edgeSet {
+	for v, lst := range cs.NetGraph.EdgeSet {
 		// 获取节点 v 所属的shard
 		vShard := cs.PartitionMap[v]
 		for _, u := range lst {
@@ -110,8 +131,8 @@ func (cs *CLPAState) Init_Partition() {
 	// 设置划分默认参数
 	cs.VertexsNumInShard = make([]int, cs.shardNum)
 	cs.PartitionMap = make(map[Vertex]int)
-	for v := range cs.NetGraph.vertexSet {
-		var va = v.addr[len(v.addr)-5:]
+	for v := range cs.NetGraph.VertexSet {
+		var va = v.Addr[len(v.Addr)-5:]
 		num, err := strconv.ParseInt(va, 16, 32)
 		if err != nil {
 			log.Panic()
@@ -125,13 +146,13 @@ func (cs *CLPAState) Init_Partition() {
 // 不会出现空分片的初始化划分
 func (cs *CLPAState) Stable_Init_Partition() error {
 	// 设置划分默认参数
-	if cs.shardNum > len(cs.NetGraph.vertexSet) {
+	if cs.shardNum > len(cs.NetGraph.VertexSet) {
 		return errors.New("too many shards, number of shards should be less than nodes. ")
 	}
 	cs.VertexsNumInShard = make([]int, cs.shardNum)
 	cs.PartitionMap = make(map[Vertex]int)
 	cnt := 0
-	for v := range cs.NetGraph.vertexSet {
+	for v := range cs.NetGraph.VertexSet {
 		cs.PartitionMap[v] = int(cnt) % cs.shardNum
 		cs.VertexsNumInShard[cs.PartitionMap[v]] += 1
 		cnt++
@@ -144,10 +165,10 @@ func (cs *CLPAState) Stable_Init_Partition() error {
 func (cs *CLPAState) getShard_score(v Vertex, uShard int) float64 {
 	var score float64
 	// 节点 v 的出度
-	v_outdegree := len(cs.NetGraph.edgeSet[v])
+	v_outdegree := len(cs.NetGraph.EdgeSet[v])
 	// uShard 与节点 v 相连的边数
 	Edgesto_uShard := 0
-	for _, item := range cs.NetGraph.edgeSet[v] {
+	for _, item := range cs.NetGraph.EdgeSet[v] {
 		if cs.PartitionMap[item] == uShard {
 			Edgesto_uShard += 1
 		}
@@ -161,11 +182,11 @@ func (cs *CLPAState) CLPA_Partition() {
 	cs.computeEdges2Shard()
 	for iter := 1; iter < cs.maxIterations; iter += 1 { // 第一层循环控制算法次数，constraint
 		stop := true // stop 控制算法是否提前停止
-		for v := range cs.NetGraph.vertexSet {
+		for v := range cs.NetGraph.VertexSet {
 			neighborShardScore := make(map[int]float64)
 			max_score := -9999.0
 			vNowShard, max_scoreShard := cs.PartitionMap[v], cs.PartitionMap[v]
-			for _, u := range cs.NetGraph.edgeSet[v] {
+			for _, u := range cs.NetGraph.EdgeSet[v] {
 				uShard := cs.PartitionMap[u]
 				// 对于属于 uShard 的邻居，仅需计算一次
 				if _, computed := neighborShardScore[uShard]; !computed {
