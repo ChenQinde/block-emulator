@@ -29,13 +29,37 @@ import (
 
 // }
 
+func (p *PShard_pbft) PTcpListen() {
+	listen, err := net.Listen("tcp", p.Node.addr)
+	if err != nil {
+		log.Panic(err)
+	}
+	fmt.Printf("节点%s%s开启监听，地址：%s\n", p.Node.shardID, p.Node.nodeID, p.Node.addr)
+	defer listen.Close()
+	//fmt.Printf("tcp0 p.Node.nodeID is %s || curchain is : %s\n", p.Node.nodeID, p.Node.CurChain.ChainConfig.NodeID)
+
+	for {
+		conn, err := listen.Accept()
+		if err != nil {
+			log.Panic(err)
+		}
+		b, err := ioutil.ReadAll(conn)
+		if err != nil {
+			log.Panic(err)
+		}
+		//fmt.Printf("tcp1 p.Node.nodeID is %s || curchain is : %s\n", p.Node.nodeID, p.Node.CurChain.ChainConfig.NodeID)
+		p.handleRequest(b)
+	}
+
+}
+
 // 节点使用的tcp监听
 func (p *Pbft) TcpListen() {
 	listen, err := net.Listen("tcp", p.Node.addr)
 	if err != nil {
 		log.Panic(err)
 	}
-	fmt.Printf("节点开启监听，地址：%s\n", p.Node.addr)
+	fmt.Printf("节点%s%s开启监听，地址：%s\n", p.Node.shardID, p.Node.nodeID, p.Node.addr)
 	defer listen.Close()
 	//fmt.Printf("tcp0 p.Node.nodeID is %s || curchain is : %s\n", p.Node.nodeID, p.Node.CurChain.ChainConfig.NodeID)
 

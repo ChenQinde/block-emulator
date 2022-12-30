@@ -4,46 +4,32 @@ import (
 	"blockEmulator/chain"
 	"blockEmulator/core"
 	"blockEmulator/params"
+	"blockEmulator/partition"
 	"blockEmulator/utils"
-	"crypto/rand"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/big"
 	"os"
 	"strings"
 	"sync"
 	"time"
 )
 
-// //本地消息池（模拟持久化层），只有确认提交成功后才会存入此池
-// var localMessagePool = []Message{}
-
-type node struct {
-	//节点ID
-	nodeID  string
-	shardID string
-	//节点监听地址
-	addr          string
-	CurChain      *chain.BlockChain
-	CurGraphChain *chain.GraphBlockChain
-}
-
-type Pbft struct {
+type PShard_pbft struct {
 	//节点信息
 	Node node
 	//每笔请求自增序号
 	sequenceID int
-	//P分片的分片号
-	PsharID string
 	//锁
 	lock sync.Mutex
 	//确保消息不重复发送的锁
 	sequenceLock sync.Mutex
 	//确保落后节点对同一区块最多只向主节点请求一次
 	requestLock sync.Mutex
+	//确保保存图的读写唯一
+	graphLock sync.Mutex
 	//临时消息池，消息摘要对应消息本体
 	messagePool map[string]*Request
 	//存放收到的prepare数量(至少需要收到并确认2f个)，根据摘要来对应
@@ -59,17 +45,16 @@ type Pbft struct {
 	nodeTable     map[string]string
 	Stop          chan int
 	malicious_num int
+	// 图的存储
+	Graph      partition.CLPAState
+	Graph2Pack partition.CLPAState
 	// 建立block、queue_length以及transaction的日记文件，也是只有主节点使用
 	blocklog *csv.Writer
 	txlog    *csv.Writer
 	queuelog *csv.Writer
-
-	// 以下为账户划分算法新增：
-	mainNode     string         // 判断是否为pbft主节点
-	PartitionMap map[string]int // 划分表
 }
 
-func NewPBFT(shardID int, nodeID int) *Pbft {
+func NewPShard_pbft(shardID int, nodeID int) *PShard_pbft {
 	config := params.ChainConfig{}
 	config.ChainID = params.Config.ChainID
 	config.Block_interval = params.Config.Block_interval
@@ -78,19 +63,19 @@ func NewPBFT(shardID int, nodeID int) *Pbft {
 	config.MinRelayBlockSize = params.Config.MinRelayBlockSize
 	config.Inject_speed = params.Config.Inject_speed
 	config.Relay_interval = params.Config.Relay_interval
-	config.Shard_num = params.Config.Shard_num
-	p := new(Pbft)
-	p.PsharID = fmt.Sprintf("S%d", config.Shard_num)
+	p := new(PShard_pbft)
 	p.Node.nodeID = fmt.Sprintf("N%d", nodeID)
 	p.Node.shardID = fmt.Sprintf("S%d", shardID)
-	//p.Node.addr = params.NodeTable[config.ShardID][config.NodeID]
+	//fmt.Printf("The address of graph node is 127.0.0.1:%d\n", 8201+shardID*100+nodeID)
 	p.Node.addr = fmt.Sprintf("127.0.0.1:%d", 8201+shardID*100+nodeID)
 	config.ShardID = fmt.Sprintf("S%d", shardID)
 	config.NodeID = fmt.Sprintf("N%d", nodeID)
 	//fmt.Println("config.NodeID ", config.NodeID)
+	p.Graph.Init_CLPAState(0.1, 150, len(params.NodeTable))
 
-	p.Node.CurChain, _ = chain.NewBlockChain(&config)
-	p.sequenceID = p.Node.CurChain.CurrentBlock.Header.Number + 1
+	p.Node.CurGraphChain, _ = chain.NewGraphBlockChain(&config)
+	//fmt.Printf("p.Node.CurGraphChain.CurrentBlock.Header.Number is %d\n", p.Node.CurGraphChain.CurrentBlock.Header.Number)
+	p.sequenceID = p.Node.CurGraphChain.CurrentBlock.Header.Number + 1
 	p.messagePool = make(map[string]*Request)
 	p.prePareConfirmCount = make(map[string]map[string]bool)
 	p.commitConfirmCount = make(map[string]map[string]bool)
@@ -100,12 +85,10 @@ func NewPBFT(shardID int, nodeID int) *Pbft {
 	p.nodeTable = params.NodeTable[config.ShardID]
 	p.Stop = make(chan int, 0)
 	p.malicious_num = config.Malicious_num
-	p.mainNode = "N0"
-	p.PartitionMap = make(map[string]int)
 	return p
 }
 
-func NewLog(p *Pbft) {
+func NewPLog(p *PShard_pbft) {
 	cond, err := PathExists("./log")
 	if !cond {
 		err := os.Mkdir("./log", os.ModePerm)
@@ -140,17 +123,8 @@ func NewLog(p *Pbft) {
 	p.queuelog.Write([]string{"timestamp", "queue_length"})
 	p.queuelog.Flush()
 }
-func PathExists(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err
-}
-func (p *Pbft) handleRequest(data []byte) {
+
+func (p *PShard_pbft) handleRequest(data []byte) {
 	//切割消息，根据消息命令调用不同的功能
 	cmd, content := splitMessage(data)
 	switch command(cmd) {
@@ -164,16 +138,8 @@ func (p *Pbft) handleRequest(data []byte) {
 		p.handleRequestBlock(content)
 	case cSendBlock:
 		p.handleSendBlock(content)
-	case cRelay:
-		p.handleRelay(content)
-	case gSendBlock:
-		p.handleGraphBlock(content)
-
-	// 以下为 账户迁移 相关代码
-	case cHandleAccountTransfer:
-		p.handle_AccountTransferMsg(content)
-	case cPartitionMsg:
-		p.handle_PartitionMsg_FromMtoW(content)
+	case gPropose:
+		p.handlegPropose()
 	case cStop:
 		p.Stop <- 1
 	}
@@ -181,7 +147,7 @@ func (p *Pbft) handleRequest(data []byte) {
 
 // 只有主节点可以调用
 // 生成一个区块并发起共识
-func (p *Pbft) Propose() {
+func (p *PShard_pbft) Propose() {
 	config := params.Config
 	for {
 		time.Sleep(time.Duration(config.Block_interval) * time.Millisecond)
@@ -193,12 +159,12 @@ func (p *Pbft) Propose() {
 	}
 }
 
-func (p *Pbft) propose() bool {
+func (p *PShard_pbft) propose() bool {
 	r := &Request{}
 	r.Timestamp = time.Now().Unix()
 	r.Message.ID = getRandom()
 
-	block := p.Node.CurChain.GenerateBlock()
+	block := p.Node.CurGraphChain.GenerateGraphBlock()
 	encoded_block := block.Encode()
 
 	r.Message.Content = encoded_block
@@ -225,8 +191,24 @@ func (p *Pbft) propose() bool {
 	return false
 }
 
+func (p *PShard_pbft) handlegPropose() {
+	p.graphLock.Lock()
+	p.Graph2Pack = p.Graph
+	err := p.Graph2Pack.Stable_Init_Partition()
+	if err == nil {
+		p.Graph2Pack.CLPA_Partition()
+	}
+	p.Node.CurGraphChain.AddGraph2Tool(&p.Graph2Pack)
+	p.graphLock.Unlock()
+	if p.Node.nodeID == "N0" {
+		p.sequenceLock.Lock() //通过锁强制要求上一个区块commit完成新的区块才能被提出
+	}
+	//fmt.Printf("%s%s: prepapre3 to popose a graph block.\n", p.Node.shardID, p.Node.nodeID)
+	p.propose()
+}
+
 // 处理预准备消息
-func (p *Pbft) handlePrePrepare(content []byte) {
+func (p *PShard_pbft) handlePrePrepare(content []byte) {
 	fmt.Printf("节点%s%s已接收到主节点发来的PrePrepare ...\n", p.Node.shardID, p.Node.nodeID)
 	//	//使用json解析出PrePrepare结构体
 	pp := new(PrePrepare)
@@ -239,7 +221,7 @@ func (p *Pbft) handlePrePrepare(content []byte) {
 		fmt.Printf("%s%s: 信息摘要对不上，拒绝进行prepare广播\n", p.Node.shardID, p.Node.nodeID)
 	} else if p.sequenceID != pp.SequenceID {
 		fmt.Printf("%s%s: 消息序号对不上，拒绝进行prepare广播\n", p.Node.shardID, p.Node.nodeID)
-	} else if !p.Node.CurChain.IsBlockValid(core.DecodeBlock(pp.RequestMessage.Message.Content)) {
+	} else if !p.Node.CurGraphChain.IsGraphBlockValid(core.DecodeGraphBlock(pp.RequestMessage.Message.Content)) {
 		// todo
 		fmt.Printf("%s%s: 区块不合法，拒绝进行prepare广播", p.Node.shardID, p.Node.nodeID)
 	} else {
@@ -262,7 +244,7 @@ func (p *Pbft) handlePrePrepare(content []byte) {
 }
 
 // 处理准备消息
-func (p *Pbft) handlePrepare(content []byte) {
+func (p *PShard_pbft) handlePrepare(content []byte) {
 	//使用json解析出Prepare结构体
 	pre := new(Prepare)
 	err := json.Unmarshal(content, pre)
@@ -310,7 +292,7 @@ func (p *Pbft) handlePrepare(content []byte) {
 }
 
 // 处理提交确认消息
-func (p *Pbft) handleCommit(content []byte) {
+func (p *PShard_pbft) handleCommit(content []byte) {
 	//使用json解析出Commit结构体
 	c := new(Commit)
 	err := json.Unmarshal(content, c)
@@ -348,55 +330,37 @@ func (p *Pbft) handleCommit(content []byte) {
 			// 2.
 			r := p.messagePool[c.Digest]
 			encoded_block := r.Message.Content
-			block := core.DecodeBlock(encoded_block)
-			p.Node.CurChain.AddBlock(block)
+			block := core.DecodeGraphBlock(encoded_block)
+			p.Node.CurGraphChain.AddGraphBlock(block)
 			fmt.Printf("%s%s : 编号为 %d 的区块已加入本地区块链！\n", p.Node.shardID, p.Node.nodeID, p.sequenceID)
-			curBlock := p.Node.CurChain.CurrentBlock
+			curBlock := p.Node.CurGraphChain.CurrentBlock
 			fmt.Printf("curBlock: \n")
 			curBlock.PrintBlock()
 
 			if p.Node.nodeID == "N0" {
-				tx_total := len(block.Transactions)
+				graph_total := len(block.Graphs)
 				now := time.Now().Unix()
-				relayCount := 0
-				//已上链交易集
-				commit_ids := []int{}
-				//fmt.Println("block Transactions is ", block.Transactions)
-				for _, v := range block.Transactions {
-					// 若交易接收者属于本分片才加入已上链交易集
-					//fmt.Println("Addr2Shard is ", utils.Addr2Shard(hex.EncodeToString(v.Recipient)), hex.EncodeToString(v.Recipient))
-					if params.ShardTable[p.Node.shardID] == utils.Addr2Shard(hex.EncodeToString(v.Recipient)) {
-						commit_ids = append(commit_ids, v.Id)
-						s := fmt.Sprintf("%v %v %v %v %v", v.Id, block.Header.Number, v.RequestTime, now, now-v.RequestTime)
-						p.txlog.Write(strings.Split(s, " "))
-					}
-					if utils.Addr2Shard(hex.EncodeToString(v.Sender)) != utils.Addr2Shard(hex.EncodeToString(v.Recipient)) {
-						relayCount++
-					}
-				}
 				p.txlog.Flush()
-				s := fmt.Sprintf("%v %v %v %v %v %v", now, block.Header.Number, tx_total, tx_total-relayCount, tx_total-len(commit_ids), relayCount-tx_total+len(commit_ids))
+				s := fmt.Sprintf("%v %v %v", now, block.Header.Number, graph_total)
 				p.blocklog.Write(strings.Split(s, " "))
 				p.blocklog.Flush()
-				// 暂时不与客户端通讯了
-				//主节点向客户端发送已确认上链的交易集
-				fmt.Println("commit_ids is ", commit_ids)
-				c, err := json.Marshal(commit_ids)
+				//主节点向M分片发送已确认上链的图
+				content := []int{}
+				c, err := json.Marshal(content)
 				if err != nil {
 					log.Panic(err)
 				}
-				m := jointMessage(cReply, c)
+				m := jointMessage(gGenerate, c)
 				utils.TcpDial(m, params.ClientAddr)
-
-				// 给P分片发送上链的区块
+				// 向M分片发送新生成的图划分区块。
 				p.SendBlocks2PShard(p.sequenceID)
 
-				queue_len := len(p.Node.CurChain.Tx_pool.Queue)
-				err = p.queuelog.Write([]string{fmt.Sprintf("%v", now), fmt.Sprintf("%v", queue_len)})
-				if err != nil {
-					log.Panic(err)
-				}
-				p.queuelog.Flush()
+				//queue_len := len(p.Node.CurGraphChain.Tx_pool.Queue)
+				//err = p.queuelog.Write([]string{fmt.Sprintf("%v", now), fmt.Sprintf("%v", queue_len)})
+				//if err != nil {
+				//	log.Panic(err)
+				//}
+				//p.queuelog.Flush()
 			}
 			p.isReply[c.Digest] = true
 
@@ -411,7 +375,7 @@ func (p *Pbft) handleCommit(content []byte) {
 	// }
 }
 
-func (p *Pbft) SendBlocks2PShard(id int) {
+func (p *PShard_pbft) SendBlocks2PShard(id int) {
 	//return
 	rb := RequestBlocks{
 		StartID:  id,
@@ -420,35 +384,38 @@ func (p *Pbft) SendBlocks2PShard(id int) {
 		NodeID:   "N0",
 	}
 
-	fmt.Printf("节点%s%s准备向P分片的%s节点发送区块 ... \n", p.Node.shardID, p.Node.nodeID, rb.NodeID)
-	blocks := make([]*core.Block, 0)
+	blocks := make([]*core.GraphBlock, 0)
 	if _, ok := p.height2Digest[id]; !ok {
-		fmt.Printf("主节点发送给P分片时没有找到高度%d对应的区块摘要！\n", id)
+		//fmt.Printf("主节点发送给M分片%s时没有找到高度%d对应的区块摘要！\n", id, k)
 	}
 	if r, ok := p.messagePool[p.height2Digest[id]]; !ok {
-		fmt.Printf("主节点发送给P分片时没有找到高度%d对应的区块！\n", id)
+		//fmt.Printf("主节点发送给M分片%s时没有找到高度%d对应的区块！\n", id, k)
 		log.Panic()
 	} else {
 		encoded_block := r.Message.Content
-		block := core.DecodeBlock(encoded_block)
+		block := core.DecodeGraphBlock(encoded_block)
 		blocks = append(blocks, block)
 	}
 	s := SendBlocks{
-		StartID: rb.StartID,
-		EndID:   rb.EndID,
-		Blocks:  blocks,
-		NodeID:  rb.ServerID,
+		StartID:     rb.StartID,
+		EndID:       rb.EndID,
+		EncodeGraph: blocks[0].Encode(),
+		NodeID:      rb.ServerID,
 	}
 	bc, err := json.Marshal(s)
 	if err != nil {
 		log.Panic(err)
 	}
-	fmt.Printf("节点%s%s正在向P分片节点%s发送区块高度%d到%d的区块\n", p.Node.shardID, p.Node.nodeID, rb.NodeID, s.StartID, s.EndID, params.NodeTable[p.PsharID][rb.NodeID])
-	message := jointMessage(cSendBlock, bc)
-	go utils.TcpDial(message, params.NodeTable[p.PsharID][rb.NodeID])
+	for k, _ := range params.NodeTable {
+		if k == p.Node.shardID {
+			continue
+		}
+		fmt.Printf("节点%s%s准备向M分片%s发送区块 ... \n", p.Node.shardID, p.Node.nodeID, k)
+		message := jointMessage(gSendBlock, bc)
+		go utils.TcpDial(message, params.NodeTable[k][rb.NodeID])
+	}
 }
-
-func (p *Pbft) requestBlocks(startID, endID int) {
+func (p *PShard_pbft) requestBlocks(startID, endID int) {
 	r := RequestBlocks{
 		StartID:  startID,
 		EndID:    endID,
@@ -466,14 +433,14 @@ func (p *Pbft) requestBlocks(startID, endID int) {
 }
 
 // 目前只有主节点会接收和处理这个请求，假设主节点拥有完整的全部区块
-func (p *Pbft) handleRequestBlock(content []byte) {
+func (p *PShard_pbft) handleRequestBlock(content []byte) {
 	rb := new(RequestBlocks)
 	err := json.Unmarshal(content, rb)
 	if err != nil {
 		log.Panic(err)
 	}
 	fmt.Printf("节点%s%s已接收到%s节点发来的 requestBlock ... \n", p.Node.shardID, p.Node.nodeID, rb.NodeID)
-	blocks := make([]*core.Block, 0)
+	blocks := make([]*core.GraphBlock, 0)
 	for id := rb.StartID; id <= rb.EndID; id++ {
 		if _, ok := p.height2Digest[id]; !ok {
 			fmt.Printf("主节点没有找到高度%d对应的区块摘要！\n", id)
@@ -483,19 +450,19 @@ func (p *Pbft) handleRequestBlock(content []byte) {
 			log.Panic()
 		} else {
 			encoded_block := r.Message.Content
-			block := core.DecodeBlock(encoded_block)
+			block := core.DecodeGraphBlock(encoded_block)
 			blocks = append(blocks, block)
 		}
 	}
 	p.SendBlocks(rb, blocks)
 
 }
-func (p *Pbft) SendBlocks(rb *RequestBlocks, blocks []*core.Block) {
+func (p *PShard_pbft) SendBlocks(rb *RequestBlocks, blocks []*core.GraphBlock) {
 	s := SendBlocks{
-		StartID: rb.StartID,
-		EndID:   rb.EndID,
-		Blocks:  blocks,
-		NodeID:  rb.ServerID,
+		StartID:     rb.StartID,
+		EndID:       rb.EndID,
+		GraphBlocks: blocks,
+		NodeID:      rb.ServerID,
 	}
 	bc, err := json.Marshal(s)
 	if err != nil {
@@ -506,38 +473,47 @@ func (p *Pbft) SendBlocks(rb *RequestBlocks, blocks []*core.Block) {
 	go utils.TcpDial(message, p.nodeTable[rb.NodeID])
 }
 
-func (p *Pbft) handleSendBlock(content []byte) {
+func (p *PShard_pbft) handleSendBlock(content []byte) {
 	sb := new(SendBlocks)
 	err := json.Unmarshal(content, sb)
 	if err != nil {
 		log.Panic(err)
 	}
-	fmt.Printf("节点%s%s已接收到%s发来的%d到%d的区块 \n", p.Node.shardID, p.Node.nodeID, sb.NodeID, sb.StartID, sb.EndID)
+	p.graphLock.Lock()
 	for id := sb.StartID; id <= sb.EndID; id++ {
-		p.Node.CurChain.AddBlock(sb.Blocks[id-sb.StartID])
-		fmt.Printf("%s%s : 编号为 %d 的区块已加入本地区块链！\n", p.Node.shardID, p.Node.nodeID, id)
-		curBlock := p.Node.CurChain.CurrentBlock
-		fmt.Printf("curBlock: \n")
-		curBlock.PrintBlock()
+		block := sb.Blocks[id-sb.StartID]
+		for _, tx := range block.Transactions {
+			var sender, recipient partition.Vertex
+			sender.ConstructVertex(hex.EncodeToString(tx.Sender))
+			recipient.ConstructVertex(hex.EncodeToString(tx.Recipient))
+			p.Graph.AddEdge(sender, recipient)
+			//fmt.Printf("id is %d : %s %s %d\n", the_id, hex.EncodeToString(tx.Sender), hex.EncodeToString(tx.Recipient), tx.Value)
+		}
 	}
-	p.sequenceID = sb.EndID + 1
-	p.requestLock.Unlock()
-}
-func (p *Pbft) handleGraphBlock(content []byte) {
-	sb := new(SendBlocks)
-	err := json.Unmarshal(content, sb)
-	if err != nil {
-		log.Panic(err)
-	}
-	graphblock := core.DecodeGraphBlock(sb.EncodeGraph)
-	for _, graph := range graphblock.Graphs {
-		fmt.Printf("Node%s%s get the GraphBlock\n", p.Node.shardID, p.Node.nodeID)
-		graph.PrintCLPA()
-	}
+	p.graphLock.Unlock()
+
 }
 
+//func (p *PShard_pbft) handleRelay(content []byte) {
+//	sb := new(SendBlocks)
+//	err := json.Unmarshal(content, sb)
+//	if err != nil {
+//		log.Panic(err)
+//	}
+//	fmt.Printf("节点%s%s已接收到%s发来的%d到%d的区块 \n", p.Node.shardID, p.Node.nodeID, sb.NodeID, sb.StartID, sb.EndID)
+//	for id := sb.StartID; id <= sb.EndID; id++ {
+//		p.Node.CurChain.AddBlock(sb.Blocks[id-sb.StartID])
+//		fmt.Printf("%s%s : 编号为 %d 的区块已加入本地区块链！\n", p.Node.shardID, p.Node.nodeID, id)
+//		curBlock := p.Node.CurChain.CurrentBlock
+//		fmt.Printf("curBlock: \n")
+//		curBlock.PrintBlock()
+//	}
+//	p.sequenceID = sb.EndID + 1
+//	p.requestLock.Unlock()
+//}
+
 // 向除自己外的其他节点进行广播
-func (p *Pbft) broadcast(cmd command, content []byte) {
+func (p *PShard_pbft) broadcast(cmd command, content []byte) {
 	for i := range p.nodeTable {
 		if i == p.Node.nodeID {
 			continue
@@ -549,7 +525,7 @@ func (p *Pbft) broadcast(cmd command, content []byte) {
 }
 
 // 为多重映射开辟赋值
-func (p *Pbft) setPrePareConfirmMap(val, val2 string, b bool) {
+func (p *PShard_pbft) setPrePareConfirmMap(val, val2 string, b bool) {
 	if _, ok := p.prePareConfirmCount[val]; !ok {
 		p.prePareConfirmCount[val] = make(map[string]bool)
 	}
@@ -557,63 +533,9 @@ func (p *Pbft) setPrePareConfirmMap(val, val2 string, b bool) {
 }
 
 // 为多重映射开辟赋值
-func (p *Pbft) setCommitConfirmMap(val, val2 string, b bool) {
+func (p *PShard_pbft) setCommitConfirmMap(val, val2 string, b bool) {
 	if _, ok := p.commitConfirmCount[val]; !ok {
 		p.commitConfirmCount[val] = make(map[string]bool)
 	}
 	p.commitConfirmCount[val][val2] = b
-}
-
-// 返回一个十位数的随机数，作为msgid
-func getRandom() int {
-	x := big.NewInt(10000000000)
-	for {
-		result, err := rand.Int(rand.Reader, x)
-		if err != nil {
-			log.Panic(err)
-		}
-		if result.Int64() > 1000000000 {
-			return int(result.Int64())
-		}
-	}
-}
-
-// relay
-func (p *Pbft) TryRelay() {
-	config := params.Config
-	for {
-		time.Sleep(time.Duration(config.Relay_interval) * time.Millisecond)
-		for k, v := range params.NodeTable {
-			if k == p.Node.shardID || k == p.PsharID {
-				continue
-			}
-			if txs, isEnough := p.Node.CurChain.Tx_pool.FetchRelayTxs(k); isEnough {
-				target_leader := v["N0"]
-				r := Relay{
-					Txs:     txs,
-					ShardID: k,
-				}
-				bc, err := json.Marshal(r)
-				if err != nil {
-					log.Panic(err)
-				}
-
-				fmt.Printf("%s%s正在向分片%v的主节点发送relay交易\n", p.Node.shardID, p.Node.nodeID, k)
-				message := jointMessage(cRelay, bc)
-				go utils.TcpDial(message, target_leader)
-			} else {
-				fmt.Printf("发向分片%v的relay交易数量不足，暂不发送！\n", k)
-			}
-		}
-	}
-}
-
-func (p *Pbft) handleRelay(content []byte) {
-	relay := new(Relay)
-	err := json.Unmarshal(content, relay)
-	if err != nil {
-		log.Panic(err)
-	}
-	fmt.Printf("节点%s已接收到分片%v发来的relay交易 \n", p.Node.nodeID, relay.ShardID)
-	p.Node.CurChain.Tx_pool.AddTxs(relay.Txs)
 }

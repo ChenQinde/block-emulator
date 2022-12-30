@@ -1,0 +1,4 @@
+timestamp,blockHeight,tx_total,tx_normal,tx_relay_first_half,tx_relay_second_half
+1672400021,1,1
+1672400048,2,1
+1672400057,3,1

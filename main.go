@@ -57,6 +57,7 @@ func build() {
 	config.Shard_num = int(shard_num)
 	config.Path = testFile
 	config.MaxRelayBlockSize = 10
+	params.PShardAddr = fmt.Sprintf("127.0.0.1:%d", 8201+shard_num*100)
 
 	newShards(shard_num, node_num)
 	fmt.Println("开始读取交易数据！")

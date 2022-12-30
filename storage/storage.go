@@ -169,6 +169,83 @@ func (s *Storage) GetBlockHeader(blockHash []byte) (*core.BlockHeader, error) {
 
 	return blockHeader, nil
 }
+func (s *Storage) AddGraphBlock(block *core.GraphBlock) {
+	err := s.DB.Update(func(tx *bolt.Tx) error {
+		blockBucket := tx.Bucket([]byte(s.blocksBucket))
+		err := blockBucket.Put(block.Hash, block.Encode())
+		if err != nil {
+			log.Panic()
+		}
+		return nil
+	})
+	if err != nil {
+		log.Panic(err)
+	}
+	s.AddGraphBlockHeader(block.Hash, block.Header)
+
+	s.UpdateNewestBlockHash(block.Hash)
+
+}
+
+func (s *Storage) GetGraphBlock(blockHash []byte) (*core.GraphBlock, error) {
+	var block *core.GraphBlock
+
+	err := s.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(blocksBucket))
+
+		blockData := b.Get(blockHash[:])
+
+		if blockData == nil {
+			return errors.New("block is not found")
+		}
+
+		block = core.DecodeGraphBlock(blockData)
+
+		return nil
+	})
+	if err != nil {
+		return block, err
+	}
+
+	return block, nil
+}
+
+func (s *Storage) AddGraphBlockHeader(blockHash []byte, header *core.GraphBlockHeader) {
+	err := s.DB.Update(func(tx *bolt.Tx) error {
+		blockHeaderBucket := tx.Bucket([]byte(s.blockHeaderBucket))
+		err := blockHeaderBucket.Put(blockHash, header.Encode())
+		if err != nil {
+			log.Panic()
+		}
+		return nil
+	})
+	if err != nil {
+		log.Panic(err)
+	}
+}
+
+func (s *Storage) GetGraphBlockHeader(blockHash []byte) (*core.GraphBlockHeader, error) {
+	var blockHeader *core.GraphBlockHeader
+
+	err := s.DB.View(func(tx *bolt.Tx) error {
+		bh := tx.Bucket([]byte(blockHeaderBucket))
+
+		blockHeaderData := bh.Get(blockHash[:])
+
+		if blockHeaderData == nil {
+			return errors.New("blockHeader is not found")
+		}
+
+		blockHeader = core.DecodeGraphBlockHeader(blockHeaderData)
+
+		return nil
+	})
+	if err != nil {
+		return blockHeader, err
+	}
+
+	return blockHeader, nil
+}
 
 func (s *Storage) UpdateStateTree(statusTree *trie.Trie) {
 	err := s.DB.Update(func(tx *bolt.Tx) error {

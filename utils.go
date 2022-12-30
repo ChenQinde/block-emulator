@@ -10,6 +10,7 @@ import (
 )
 
 var shards []*shard.Shard
+var pshard *shard.PShard
 
 func newShards(shardNum int, node_num int) {
 	AddShardNodeToConfig(shardNum, node_num)
@@ -19,6 +20,13 @@ func newShards(shardNum int, node_num int) {
 		sigshard := shard.NewShard(shardID, node_num)
 		shards = append(shards, sigshard)
 	}
+	buildPshard(shardNum, node_num)
+}
+
+func buildPshard(shardNum int, node_num int) {
+	params.ShardTable[fmt.Sprintf("S%d", shardNum)] = shardNum
+	params.ShardTableInt2Str[shardNum] = fmt.Sprintf("S%d", shardNum)
+	pshard = shard.NewPShard(shardNum, node_num)
 }
 
 // 废弃，因为在新增pbft节点的时候就必须声明表格了。
@@ -31,7 +39,7 @@ func newShards(shardNum int, node_num int) {
 //		params.NodeTable[fmt.Sprintf("S%d", sigshard.ShardID)] = nodetable
 //	}
 func AddShardNodeToConfig(shardNum int, node_num int) {
-	for shardID := 0; shardID < shardNum; shardID++ {
+	for shardID := 0; shardID <= shardNum; shardID++ {
 		nodetable := make(map[string]string)
 		for nodeID := 0; nodeID < node_num; nodeID++ {
 			nodetable[fmt.Sprintf("N%d", nodeID)] = fmt.Sprintf("127.0.0.1:%d", 8201+shardID*100+nodeID)
@@ -66,4 +74,7 @@ func N0startReadTX(shardNum int) {
 		go node.P.Propose()
 		go node.P.TryRelay()
 	}
+	node := pshard.Nodes[0]
+	pbft.NewPLog(node.P)
+	//go node.P.Propose()
 }

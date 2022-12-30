@@ -35,12 +35,24 @@ func RunClient(path string) {
 					finished_cnt += 1
 					fmt.Printf("id is %d\n", id)
 					fmt.Printf("finish nums is %d\n", finished_cnt)
+					if finished_cnt%50 == 0 {
+						content := []int{}
+						c, err := json.Marshal(content)
+						if err != nil {
+							log.Panic(err)
+						}
+						fmt.Printf("PAddress is %s\n", params.PShardAddr)
+						m := jointMessage(gPropose, c)
+						utils.TcpDial(m, params.PShardAddr)
+					}
 					if finished_cnt == tx_cnt {
 						all_finish <- 1
 						break
 					}
 				}
 			}
+		case gGenerate:
+			fmt.Printf("A new graph is generated!\n")
 		default:
 			log.Panic()
 		}

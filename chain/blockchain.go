@@ -206,16 +206,16 @@ func (bc *BlockChain) AddGenesisBlock(block *core.Block) {
 // 创世区块中初始化几个账户
 func genesisStateTree() *trie.Trie {
 	trie := trie.NewTrie()
-	for i := 0; i < len(params.Init_addrs); i++ {
-		address := params.Init_addrs[i]
-		value := new(big.Int)
-		value.SetString(params.Init_balance, 10)
-		accountState := &core.AccountState{
-			Balance: value,
-		}
-		hex_address, _ := hex.DecodeString(address)
-		trie.Put(hex_address, accountState.Encode())
-	}
+	//for i := 0; i < len(params.Init_addrs); i++ {
+	//	address := params.Init_addrs[i]
+	//	value := new(big.Int)
+	//	value.SetString(params.Init_balance, 10)
+	//	accountState := &core.AccountState{
+	//		Balance: value,
+	//	}
+	//	hex_address, _ := hex.DecodeString(address)
+	//	trie.Put(hex_address, accountState.Encode())
+	//}
 	return trie
 }
 

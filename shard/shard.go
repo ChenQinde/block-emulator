@@ -25,6 +25,15 @@ type Node struct {
 	P      *pbft.Pbft //代表分片内的那部分
 }
 
+type PShard struct {
+	ShardID int
+	Nodes   []*PNode
+}
+type PNode struct {
+	NodeID int
+	P      *pbft.PShard_pbft //代表分片内的那部分
+}
+
 var (
 	txs []*core.Transaction
 )
@@ -58,6 +67,38 @@ func NewNodes(shardID int, node_num int) {
 		nowNodeID := fmt.Sprintf("S%dN%d", shardID, nodeID)
 		fmt.Printf("Node%s is running!\n", nowNodeID)
 		NewNode(shardID, nodeID)
+	}
+}
+
+var pnodes []*PNode
+
+func NewPNode(shardID int, nodeID int) *PNode {
+	node := new(PNode)
+	node.P = pbft.NewPShard_pbft(shardID, nodeID)
+	node.NodeID = nodeID
+
+	go node.P.PTcpListen() //启动节点
+	block := node.P.Node.CurGraphChain.CurrentBlock
+	fmt.Printf("current block: \n")
+	block.PrintBlock()
+	pnodes = append(pnodes, node)
+	return node
+}
+
+func NewPShard(shardID int, node_num int) *PShard {
+	shard := new(PShard)
+	shard.ShardID = shardID
+	nodes = nil
+	NewPNodes(shardID, node_num)
+	shard.Nodes = pnodes
+	return shard
+}
+
+func NewPNodes(shardID int, node_num int) {
+	for nodeID := 0; nodeID < node_num; nodeID++ {
+		nowNodeID := fmt.Sprintf("S%dN%d", shardID, nodeID)
+		fmt.Printf("Node%s is running!\n", nowNodeID)
+		NewPNode(shardID, nodeID)
 	}
 }
 

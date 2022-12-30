@@ -53,10 +53,12 @@ type RequestBlocks struct {
 }
 
 type SendBlocks struct {
-	StartID int
-	EndID   int
-	Blocks  []*core.Block
-	NodeID  string
+	StartID     int
+	EndID       int
+	Blocks      []*core.Block
+	GraphBlocks []*core.GraphBlock
+	EncodeGraph []byte
+	NodeID      string
 }
 
 // <REPLY,v,t,c,i,r>
@@ -77,19 +79,21 @@ type command string
 
 const (
 	// cRequest    command = "request"
-	cPrePrepare   command = "preprepare"
-	cPrepare      command = "prepare"
-	cCommit       command = "commit"
-	cRequestBlock command = "requestBlock"
-	cSendBlock    command = "sendBlock"
-	cReply        command = "reply"
+	cPrePrepare            command = "preprepare"
+	cPrepare               command = "prepare"
+	cCommit                command = "commit"
+	cRequestBlock          command = "requestBlock"
+	cSendBlock             command = "sendBlock"
+	cReply                 command = "reply"
+	gPropose               command = "gPropose"
+	gGenerate              command = "gGenerate"
+	gSendBlock             command = "gSendBlock"
+	cPartitionMsg          command = "partitionMsg"
+	cHandleAccountTransfer command = "accountTransfer"
 
 	cRelay command = "relay"
 
 	cStop command = "stop"
-
-	cPartitionMsg          command = "partitionMsg"
-	cHandleAccountTransfer command = "accountTransfer"
 )
 
 // 默认前十二位为命令名称

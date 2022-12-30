@@ -17,6 +17,7 @@ type ChainConfig struct {
 
 var (
 	ClientAddr = "127.0.0.1:8200"
+	PShardAddr = "127.0.0.1:8401"
 	NodeTable  = map[string]map[string]string{}
 
 	ShardTable = map[string]int{
