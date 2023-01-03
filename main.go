@@ -11,8 +11,8 @@ import (
 // GO111MODULE=on go run main.go
 
 var (
-	shard_num     int
-	node_num      int
+	shardNum      int
+	nodeNum       int
 	shardID       string
 	malicious_num int
 	nodeID        string
@@ -32,8 +32,8 @@ func main() {
 }
 
 func build() {
-	flag.IntVarP(&shard_num, "shard_num", "S", 1, "indicate that how many shards are deployed")
-	flag.IntVarP(&node_num, "node_num", "N", 1, "indicate that how many nodes of each shard are deployed")
+	flag.IntVarP(&shardNum, "shardNum", "S", 1, "indicate that how many shards are deployed")
+	flag.IntVarP(&nodeNum, "nodeNum", "N", 1, "indicate that how many nodes of each shard are deployed")
 	//flag.StringVarP(&shardID, "shardID", "s", "", "id of the shard to which this node belongs, for example, S0")
 	flag.IntVarP(&malicious_num, "malicious_num", "f", 1, "indicate the maximum of malicious nodes in one shard")
 	//flag.StringVarP(&nodeID, "nodeID", "n", "", "id of this node, for example, N0")
@@ -53,18 +53,21 @@ func build() {
 	config := params.Config
 	//config.NodeID = nodeID
 	//config.ShardID = "S0"
-	config.Malicious_num = int((node_num - 1) / 3)
-	config.Shard_num = int(shard_num)
+	config.Malicious_num = int((nodeNum - 1) / 3)
+	config.Shard_num = int(shardNum)
 	config.Path = testFile
 	config.MaxRelayBlockSize = 10
-	params.PShardAddr = fmt.Sprintf("127.0.0.1:%d", 8201+shard_num*100)
+	params.PShardAddr = fmt.Sprintf("127.0.0.1:%d", 8201+shardNum*100)
 
-	newShards(shard_num, node_num)
+	LoadTxsFromFIle(testFile, shardNum)
+	newShards(shardNum, nodeNum)
 	fmt.Println("开始读取交易数据！")
-	N0startReadTX(shard_num)
+	PrintAccount(shardNum)
+	N0startReadTX(shardNum)
 
 	//fmt.Println("等待关闭节点！")
-	closeNodeChan(shard_num)
+	closeNodeChan(shardNum)
+	PrintAccount(shardNum)
 	fmt.Println("============================================================================\n")
 	//
 	//if _, ok := params.NodeTable[shardID][nodeID]; ok {

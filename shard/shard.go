@@ -53,6 +53,14 @@ func NewNode(shardID int, nodeID int) *Node {
 	return node
 }
 
+func NewNodes(shardID int, node_num int) {
+	for nodeID := 0; nodeID < node_num; nodeID++ {
+		nowNodeID := fmt.Sprintf("S%dN%d", shardID, nodeID)
+		fmt.Printf("Node%s is running!\n", nowNodeID)
+		NewNode(shardID, nodeID)
+	}
+}
+
 func NewShard(shardID int, node_num int) *Shard {
 	shard := new(Shard)
 	shard.ShardID = shardID
@@ -61,12 +69,9 @@ func NewShard(shardID int, node_num int) *Shard {
 	shard.Nodes = nodes
 	return shard
 }
-
-func NewNodes(shardID int, node_num int) {
-	for nodeID := 0; nodeID < node_num; nodeID++ {
-		nowNodeID := fmt.Sprintf("S%dN%d", shardID, nodeID)
-		fmt.Printf("Node%s is running!\n", nowNodeID)
-		NewNode(shardID, nodeID)
+func (s Shard) InitAccountMap(inputMap map[string]int) {
+	for _, node := range s.Nodes {
+		node.P.InitPartitionMap(inputMap)
 	}
 }
 

@@ -65,8 +65,7 @@ type Pbft struct {
 	queuelog *csv.Writer
 
 	// 以下为账户划分算法新增：
-	mainNode     string         // 判断是否为pbft主节点
-	PartitionMap map[string]int // 划分表
+	mainNode string // 判断是否为pbft主节点
 }
 
 func NewPBFT(shardID int, nodeID int) *Pbft {
@@ -101,8 +100,11 @@ func NewPBFT(shardID int, nodeID int) *Pbft {
 	p.Stop = make(chan int, 0)
 	p.malicious_num = config.Malicious_num
 	p.mainNode = "N0"
-	p.PartitionMap = make(map[string]int)
 	return p
+}
+
+func (p *Pbft) InitPartitionMap(inputMap map[string]int) {
+	p.Node.CurChain.InitPartitionMap(inputMap)
 }
 
 func NewLog(p *Pbft) {

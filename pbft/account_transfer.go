@@ -170,7 +170,7 @@ func (p *Pbft) handle_PartitionMsg_FromMtoW(rawMsg []byte) {
 		return
 	}
 	// 首先处理要发送给其他分片的信息
-	oldMap := p.PartitionMap
+	oldMap := p.Node.CurChain.PartitionMap
 	atmsgList := p.generate_AccountTransferMsg(oldMap, pmsg.PartitionMap)
 	for desShard, atmsg := range atmsgList {
 		if desShard != shardID {
@@ -185,5 +185,5 @@ func (p *Pbft) handle_PartitionMsg_FromMtoW(rawMsg []byte) {
 		}
 	}
 	// 更新分片 map
-	p.PartitionMap = pmsg.PartitionMap
+	p.Node.CurChain.PartitionMap = pmsg.PartitionMap
 }

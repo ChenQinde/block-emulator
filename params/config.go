@@ -39,11 +39,11 @@ var (
 		Relay_interval:    5000,
 	}
 
-	Init_addrs = []string{
-		"171382ed4571b1084bb5963053203c237dba6da9",
-		"2185bf3bfda43894efdcc1a3f4a99a7f160bc123",
-		"374be1a1d1ac0ff350dc9d0a0be3d059c7082791",
-		"42fd9ff72a798780c0dffc68f89b64ba240240dd",
-	}
+	Init_addrs = []string{}
+	//	"171382ed4571b1084bb5963053203c237dba6da9",
+	//	"2185bf3bfda43894efdcc1a3f4a99a7f160bc123",
+	//	"374be1a1d1ac0ff350dc9d0a0be3d059c7082791",
+	//	"42fd9ff72a798780c0dffc68f89b64ba240240dd",
+	//}
 	Init_balance string = "100000000000000000000000000000000000000000000" //40个0
 )

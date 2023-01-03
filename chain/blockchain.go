@@ -11,7 +11,6 @@ import (
 	"blockEmulator/params"
 	"blockEmulator/storage"
 	"blockEmulator/trie"
-	"blockEmulator/utils"
 )
 
 type BlockChain struct {
@@ -24,6 +23,8 @@ type BlockChain struct {
 	StatusTrie *trie.Trie
 
 	Tx_pool *core.Tx_pool
+
+	PartitionMap map[string]int // 划分表
 }
 
 func NewBlockChain(chainConfig *params.ChainConfig) (*BlockChain, error) {
@@ -33,6 +34,8 @@ func NewBlockChain(chainConfig *params.ChainConfig) (*BlockChain, error) {
 		Storage:     storage.NewStorage(chainConfig),
 		Tx_pool:     core.NewTxPool(),
 	}
+
+	bc.PartitionMap = make(map[string]int)
 
 	blockHash, err := bc.Storage.GetNewestBlockHash()
 	if err != nil {
@@ -55,6 +58,12 @@ func NewBlockChain(chainConfig *params.ChainConfig) (*BlockChain, error) {
 	bc.StatusTrie = stateTree
 
 	return bc, nil
+}
+
+func (bc *BlockChain) InitPartitionMap(inputMap map[string]int) {
+	for addr := range inputMap {
+		bc.PartitionMap[addr] = inputMap[addr]
+	}
 }
 
 func (bc *BlockChain) AddBlock(block *core.Block) {
@@ -86,7 +95,7 @@ func (bc *BlockChain) AddBlock(block *core.Block) {
 
 func (bc *BlockChain) genRelayTxs(block *core.Block) {
 	for _, tx := range block.Transactions {
-		shardID := utils.Addr2Shard(hex.EncodeToString(tx.Recipient))
+		shardID := bc.PartitionMap[hex.EncodeToString(tx.Recipient)]
 		if shardID != params.ShardTable[bc.ChainConfig.ShardID] {
 			bc.Tx_pool.AddRelayTx(tx, params.ShardTableInt2Str[shardID])
 		}
@@ -124,19 +133,16 @@ func (bc *BlockChain) buildTreeOfTxs(txs []*core.Transaction) *trie.Trie {
 }
 
 func (bc *BlockChain) getUpdatedTreeOfState(txs []*core.Transaction) *trie.Trie {
-	stateTree := bc.preExecute(txs, bc)
-	// stateTree, err := bc.Storage.GetStatusTree()
-	// if err != nil {
-	// 	if err.Error() == "stateTree is not found" {
-	// 		stateTree = genesisStateTree()
-	// 	} else {
-	// 		log.Panic()
-	// 	}
-	// }
+	//stateTree := bc.preExecute(txs, bc)
+
+	stateTree := &trie.Trie{}
+	trie.DeepCopy(stateTree, bc.StatusTrie)
 
 	for _, tx := range txs {
 		// 确保发送地址属于此分片，即此交易不是其它分片发来的relay交易
-		if utils.Addr2Shard(hex.EncodeToString(tx.Sender)) == params.ShardTable[bc.ChainConfig.ShardID] {
+		//if utils.Addr2Shard(hex.EncodeToString(tx.Sender)) == params.ShardTable[bc.ChainConfig.ShardID] {
+		//fmt.Println("bc address is ", hex.EncodeToString(tx.Sender), " || ", bc.PartitionMap[hex.EncodeToString(tx.Sender)])
+		if bc.PartitionMap[hex.EncodeToString(tx.Sender)] == params.ShardTable[bc.ChainConfig.ShardID] {
 			decoded, success := stateTree.Get(tx.Sender)
 			if !success {
 				log.Panic()
@@ -147,7 +153,8 @@ func (bc *BlockChain) getUpdatedTreeOfState(txs []*core.Transaction) *trie.Trie 
 		}
 
 		// 接收地址不在此分片，不对该状态进行修改
-		if utils.Addr2Shard(hex.EncodeToString(tx.Recipient)) != params.ShardTable[bc.ChainConfig.ShardID] {
+		//if utils.Addr2Shard(hex.EncodeToString(tx.Recipient)) != params.ShardTable[bc.ChainConfig.ShardID] {
+		if bc.PartitionMap[hex.EncodeToString(tx.Recipient)] != params.ShardTable[bc.ChainConfig.ShardID] {
 			continue
 		}
 		decoded, success := stateTree.Get(tx.Recipient)
@@ -206,16 +213,16 @@ func (bc *BlockChain) AddGenesisBlock(block *core.Block) {
 // 创世区块中初始化几个账户
 func genesisStateTree() *trie.Trie {
 	trie := trie.NewTrie()
-	//for i := 0; i < len(params.Init_addrs); i++ {
-	//	address := params.Init_addrs[i]
-	//	value := new(big.Int)
-	//	value.SetString(params.Init_balance, 10)
-	//	accountState := &core.AccountState{
-	//		Balance: value,
-	//	}
-	//	hex_address, _ := hex.DecodeString(address)
-	//	trie.Put(hex_address, accountState.Encode())
-	//}
+	for i := 0; i < len(params.Init_addrs); i++ {
+		address := params.Init_addrs[i]
+		value := new(big.Int)
+		value.SetString(params.Init_balance, 10)
+		accountState := &core.AccountState{
+			Balance: value,
+		}
+		hex_address, _ := hex.DecodeString(address)
+		trie.Put(hex_address, accountState.Encode())
+	}
 	return trie
 }
 
@@ -245,7 +252,8 @@ func (bc *BlockChain) preExecute(txs []*core.Transaction, chain *BlockChain) *tr
 
 	for _, tx := range txs {
 		sender := tx.Sender
-		if utils.Addr2Shard(hex.EncodeToString(sender)) == params.ShardTable[bc.ChainConfig.ShardID] { // 发送地址在此分片，此交易不是其它分片发送过来的relay交易
+		//if utils.Addr2Shard(hex.EncodeToString(sender)) == params.ShardTable[bc.ChainConfig.ShardID] { // 发送地址在此分片，此交易不是其它分片发送过来的relay交易
+		if bc.PartitionMap[hex.EncodeToString(sender)] == params.ShardTable[bc.ChainConfig.ShardID] { // 发送地址在此分片，此交易不是其它分片发送过来的relay交易
 			if _, ok := stateTree.Get(sender); !ok {
 				value := new(big.Int)
 				value.SetString(params.Init_balance, 10)
@@ -257,7 +265,8 @@ func (bc *BlockChain) preExecute(txs []*core.Transaction, chain *BlockChain) *tr
 		}
 
 		receiver := tx.Recipient
-		if utils.Addr2Shard(hex.EncodeToString(receiver)) != params.ShardTable[bc.ChainConfig.ShardID] { // 接收地址不在此分片
+		//if utils.Addr2Shard(hex.EncodeToString(receiver)) != params.ShardTable[bc.ChainConfig.ShardID] { // 接收地址不在此分片
+		if bc.PartitionMap[hex.EncodeToString(receiver)] != params.ShardTable[bc.ChainConfig.ShardID] { // 接收地址不在此分片
 			continue
 		}
 		if _, ok := stateTree.Get(receiver); !ok {
