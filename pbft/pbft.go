@@ -89,6 +89,7 @@ func NewPBFT(shardID int, nodeID int) *Pbft {
 	//fmt.Println("config.NodeID ", config.NodeID)
 
 	p.Node.CurChain, _ = chain.NewBlockChain(&config)
+	fmt.Printf("Node S%dN%d and chain nodeid is %s\n", shardID, nodeID, p.Node.CurChain.ChainConfig.NodeID)
 	p.sequenceID = p.Node.CurChain.CurrentBlock.Header.Number + 1
 	p.messagePool = make(map[string]*Request)
 	p.prePareConfirmCount = make(map[string]map[string]bool)
@@ -174,8 +175,8 @@ func (p *Pbft) handleRequest(data []byte) {
 	// 以下为 账户迁移 相关代码
 	case cHandleAccountTransfer:
 		p.handle_AccountTransferMsg(content)
-	case cPartitionMsg:
-		p.handle_PartitionMsg_FromMtoW(content)
+	//case cPartitionMsg:
+	//	p.handle_PartitionMsg_FromMtoW(content)
 	case cStop:
 		p.Stop <- 1
 	}

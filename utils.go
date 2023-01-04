@@ -14,7 +14,9 @@ import (
 	"io/ioutil"
 	"log"
 	"math/big"
+	"math/rand"
 	"os"
+	"time"
 )
 
 var shards []*shard.Shard
@@ -25,6 +27,33 @@ var pshard *shard.PShard
 var Shard2Txs [][]*core.Transaction // shard 对应的交易合集
 var PartitionMap map[string]int     // 账户属于哪个分片
 var Shard2Account map[int][]string  // 每个分片的账户
+
+func generateTxs(txNum int, path string) {
+
+	txCsvFile, err := os.Create(path)
+	if err != nil {
+		log.Panic(err)
+	}
+	// defer csvFile.Close()
+	txsFile := csv.NewWriter(txCsvFile)
+	txsFile.Write([]string{"from", "to", "value"})
+	account_record := make([]string, 0)
+	for i := 0; i < txNum; i++ {
+		from := fmt.Sprintf("0x%08d", i)
+		tmp := time.Now().UnixNano() + int64(i)
+		tmp1 := time.Now().UnixNano() + int64(i*2)
+		to := fmt.Sprintf("0x%08v", rand.New(rand.NewSource(tmp)).Int31n(100000000))
+		if i < txNum/2 {
+			account_record = append(account_record, to)
+		}
+		if i >= txNum/2 {
+			to = account_record[i-txNum/2]
+		}
+		value := fmt.Sprintf("%03v", rand.New(rand.NewSource(tmp1)).Int31n(1000))
+		txsFile.Write([]string{from, to, value})
+		txsFile.Flush()
+	}
+}
 
 func LoadTxsFromFIle(path string, shardNum int) {
 	Shard2Txs = make([][]*core.Transaction, shardNum+1)
@@ -46,11 +75,6 @@ func LoadTxsFromFIle(path string, shardNum int) {
 		log.Panic()
 	}
 	txid := 0
-	//a, _ := hex.DecodeString("20503265912")
-	//c, _ := hex.DecodeString("2050326591234")
-	//b := hex.EncodeToString(a)
-	//d := hex.EncodeToString(c)
-	//fmt.Println("Test is ", a, " || ", b, " || ", d)
 	for {
 		row, err := r.Read()
 		// fmt.Printf("%v %v %v\n", row[0][2:], row[1][2:], row[2])
@@ -86,26 +110,22 @@ func LoadTxsFromFIle(path string, shardNum int) {
 		//addrTable[recipientAddr] = utils.Addr2Shard(hex.EncodeToString(recipient))
 		//string2Addr[hex.EncodeToString(sender)] = senderAddr
 		//string2Addr[hex.EncodeToString(recipient)] = recipientAddr
-
 		PartitionMap[hex.EncodeToString(sender)] = utils.Addr2Shard(hex.EncodeToString(sender))
 		PartitionMap[hex.EncodeToString(recipient)] = utils.Addr2Shard(hex.EncodeToString(recipient))
 		// hex 有问题这个才是正确的
 		//PartitionMap[row[0][2:]] = addrTable[senderAddr]
 		//PartitionMap[row[1][2:]] = addrTable[recipientAddr]
-		Shard2Account[PartitionMap[hex.EncodeToString(sender)]] = append(
-			Shard2Account[PartitionMap[hex.EncodeToString(sender)]],
-			hex.EncodeToString(sender),
-		)
-		Shard2Account[PartitionMap[hex.EncodeToString(recipient)]] = append(
-			Shard2Account[PartitionMap[hex.EncodeToString(recipient)]],
-			hex.EncodeToString(recipient),
-		)
+
 		txid += 1
+	}
+	for addr, _ := range PartitionMap {
+		Shard2Account[PartitionMap[addr]] = append(Shard2Account[PartitionMap[addr]], addr)
 	}
 	fmt.Printf("txs length is %d\n", txid)
 }
 
 func newShards(shardNum int, nodeNum int) {
+	fmt.Printf("the size is %d %d %d\n", len(PartitionMap), len(Shard2Account[0]), len(Shard2Account[1]))
 	AddShardNodeToConfig(shardNum, nodeNum)
 	for shardID := 0; shardID < shardNum; shardID++ {
 		params.ShardTable[fmt.Sprintf("S%d", shardID)] = shardID
@@ -193,6 +213,7 @@ func N0startReadTX(shardNum int) {
 func PrintAccount(shardNum int) {
 	for shardID := 0; shardID < shardNum; shardID++ {
 		node := shards[shardID].Nodes[0]
+		fmt.Printf("The addres num of the shard %d is %d\n", shardID, len(Shard2Account[shardID]))
 		for _, account := range Shard2Account[shardID] {
 			addr, _ := hex.DecodeString(account)
 			decoded, success := node.P.Node.CurChain.StatusTrie.Get(addr)

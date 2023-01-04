@@ -58,6 +58,7 @@ func build() {
 	config.Path = testFile
 	config.MaxRelayBlockSize = 10
 	params.PShardAddr = fmt.Sprintf("127.0.0.1:%d", 8201+shardNum*100)
+	//generateTxs(190, testFile)
 
 	LoadTxsFromFIle(testFile, shardNum)
 	newShards(shardNum, nodeNum)
