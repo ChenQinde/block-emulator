@@ -1,11 +1,13 @@
 package main
 
 import (
+	"blockEmulator/broker"
 	"blockEmulator/params"
 	"blockEmulator/pbft"
 	"fmt"
 	flag "github.com/spf13/pflag"
 	"log"
+	"os"
 )
 
 // GO111MODULE=on go run main.go
@@ -28,6 +30,7 @@ func main() {
 	// test.Test_random()
 	// test.Test_shard()
 	// fmt.Println(len("a1e4380a3b1f749673e270229993ee55f35663b4"))
+	//test.TestGetAccountState()
 	build()
 }
 
@@ -41,6 +44,12 @@ func build() {
 	flag.BoolVarP(&isClient, "client", "c", false, "whether this node is a client")
 
 	flag.Parse()
+
+	//清空现有记录
+	err := os.RemoveAll("./record")
+	if err != nil {
+		return
+	}
 
 	if isClient {
 		if testFile == "" {
@@ -60,7 +69,18 @@ func build() {
 	params.PShardAddr = fmt.Sprintf("127.0.0.1:%d", 8201+shardNum*100)
 	//generateTxs(190, testFile)
 
+	//
+	//todo 设置broker bug 必须先设置broker然后才可以设置broker交易
+	broker.GetAllTx(testFile)
+	brokers := broker.SetBrokers(1)
+	broker.GetBrokerTxs()
+	broker.AllocationTx()
+
 	LoadTxsFromFIle(testFile, shardNum)
+
+	//给每个分片添加broker账户
+	UpdateShard2Account(brokers)
+
 	newShards(shardNum, nodeNum)
 	fmt.Println("开始读取交易数据！")
 	PrintAccount(shardNum)
