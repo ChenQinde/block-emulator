@@ -124,6 +124,19 @@ func LoadTxsFromFIle(path string, shardNum int) {
 	fmt.Printf("txs length is %d\n", txid)
 }
 
+func UpdateShard2Account(brokers []string) map[int][]string {
+	for _, broker := range brokers {
+		for k, _ := range Shard2Account {
+			if k == PartitionMap[broker[2:]] {
+				continue
+			}
+			Shard2Account[k] = append(Shard2Account[k], broker[2:])
+		}
+	}
+	return Shard2Account
+
+}
+
 func newShards(shardNum int, nodeNum int) {
 	fmt.Printf("the size is %d %d %d\n", len(PartitionMap), len(Shard2Account[0]), len(Shard2Account[1]))
 	AddShardNodeToConfig(shardNum, nodeNum)
