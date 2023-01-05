@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"blockEmulator/broker"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -89,7 +90,8 @@ func (bc *BlockChain) AddBlock(block *core.Block) {
 
 	// relay
 	if bc.ChainConfig.NodeID == "N0" {
-		bc.genRelayTxs(block)
+		//todo relay交易先注释掉
+		//bc.genRelayTxs(block)
 	}
 }
 
@@ -142,7 +144,8 @@ func (bc *BlockChain) getUpdatedTreeOfState(txs []*core.Transaction) *trie.Trie 
 		// 确保发送地址属于此分片，即此交易不是其它分片发来的relay交易
 		//if utils.Addr2Shard(hex.EncodeToString(tx.Sender)) == params.ShardTable[bc.ChainConfig.ShardID] {
 		//fmt.Println("bc address is ", hex.EncodeToString(tx.Sender), " || ", bc.PartitionMap[hex.EncodeToString(tx.Sender)])
-		if bc.PartitionMap[hex.EncodeToString(tx.Sender)] == params.ShardTable[bc.ChainConfig.ShardID] {
+		//todo 发送方是broker
+		if bc.PartitionMap[hex.EncodeToString(tx.Sender)] == params.ShardTable[bc.ChainConfig.ShardID] || broker.IsBroker(hex.EncodeToString(tx.Sender)) {
 			decoded, success := stateTree.Get(tx.Sender)
 			if !success {
 				log.Panic()
@@ -154,7 +157,8 @@ func (bc *BlockChain) getUpdatedTreeOfState(txs []*core.Transaction) *trie.Trie 
 
 		// 接收地址不在此分片，不对该状态进行修改
 		//if utils.Addr2Shard(hex.EncodeToString(tx.Recipient)) != params.ShardTable[bc.ChainConfig.ShardID] {
-		if bc.PartitionMap[hex.EncodeToString(tx.Recipient)] != params.ShardTable[bc.ChainConfig.ShardID] {
+		//todo 状态更新，接收地址不在此分片，不对该状态进行修改，且不是broker
+		if bc.PartitionMap[hex.EncodeToString(tx.Recipient)] != params.ShardTable[bc.ChainConfig.ShardID] && !broker.IsBroker(hex.EncodeToString(tx.Recipient)) {
 			continue
 		}
 		decoded, success := stateTree.Get(tx.Recipient)
