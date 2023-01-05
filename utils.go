@@ -1,6 +1,7 @@
 package main
 
 import (
+	"blockEmulator/broker"
 	"blockEmulator/core"
 	"blockEmulator/params"
 	"blockEmulator/pbft"
@@ -96,12 +97,23 @@ func LoadTxsFromFIle(path string, shardNum int) {
 		//value := new(big.Int)
 		//value.SetString(row[6], 10)
 		//value.SetString("1", 10)
-		Shard2Txs[sid] = append(Shard2Txs[sid], &core.Transaction{
-			Sender:    sender,
-			Recipient: recipient,
-			Value:     value,
-			Id:        txid,
-		})
+		//todo 读取交易时分配交易所属分片，考虑broker的情况
+		rid := utils.Addr2Shard(hex.EncodeToString(recipient))
+		if broker.IsBroker(row[0][2:]) {
+			Shard2Txs[rid] = append(Shard2Txs[rid], &core.Transaction{
+				Sender:    sender,
+				Recipient: recipient,
+				Value:     value,
+				Id:        txid,
+			})
+		} else {
+			Shard2Txs[sid] = append(Shard2Txs[sid], &core.Transaction{
+				Sender:    sender,
+				Recipient: recipient,
+				Value:     value,
+				Id:        txid,
+			})
+		}
 		//senderAddr := common.HexToAddress(row[0][2:])
 		//recipientAddr := common.HexToAddress(row[1][2:])
 		//senderAddr := common.HexToAddress(row[3][2:])
@@ -214,7 +226,12 @@ func N0startReadTX(shardNum int) {
 		pbft.NewLog(node.P)
 		fmt.Printf("The path is %s\n", config.Path)
 		//txs := shard.LoadTxsWithShard(config.Path, params.ShardTable[fmt.Sprintf("S%d", shardID)])
-		go shard.InjectTxs2Shard(node.P.Node.CurChain.Tx_pool, Shard2Txs[shardID])
+
+		//todo 转化ctx1
+		fmt.Printf("S%d开始转换ctx1...", shardID)
+		txs := broker.BrokerTx2CTX1(Shard2Txs[shardID])
+		go shard.InjectTxs2Shard(node.P.Node.CurChain.Tx_pool, txs)
+
 		go node.P.Propose()
 		go node.P.TryRelay()
 	}
