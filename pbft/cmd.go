@@ -93,6 +93,8 @@ const (
 
 	cRelay command = "relay"
 
+	cCTX2 command = "ctx2"
+
 	cStop command = "stop"
 )
 
