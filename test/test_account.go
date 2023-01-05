@@ -31,8 +31,8 @@ func TestAccountGetAll() {
 }
 
 func TestGetAccountState() {
-	account.Init("S0", "N3")
-	fmt.Println(account.GetAccountState("0x48c52ecd7aed4ec0816eb6f79e2be23e9a50a0c7").Balance)
+	account.Init("S0", "N0")
+	fmt.Println(account.GetAccountState("0x380dde9af3602e85f05cf0fe56c2556aa4f1fb06").Balance)
 }
 
 func TestGenerateTransaction() {
