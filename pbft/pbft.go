@@ -1,6 +1,7 @@
 package pbft
 
 import (
+	"blockEmulator/broker"
 	"blockEmulator/chain"
 	"blockEmulator/core"
 	"blockEmulator/params"
@@ -177,6 +178,8 @@ func (p *Pbft) handleRequest(data []byte) {
 		p.handle_AccountTransferMsg(content)
 	//case cPartitionMsg:
 	//	p.handle_PartitionMsg_FromMtoW(content)
+	case cCTX2:
+		p.handleCtx2(content)
 	case cStop:
 		p.Stop <- 1
 	}
@@ -359,6 +362,19 @@ func (p *Pbft) handleCommit(content []byte) {
 			curBlock.PrintBlock()
 
 			if p.Node.nodeID == "N0" {
+
+				//todo 发送broker交易
+				fmt.Println("已经上链的交易↓")
+				for _, v := range block.Transactions {
+					v.PrintTx()
+				}
+				ctx2 := broker.CTX1ToCTX2(block.Transactions)
+				fmt.Println("ctx2交易如下↓")
+				for _, v := range ctx2 {
+					v.PrintTx()
+				}
+				sendBrokerCtx2Msg(ctx2)
+
 				tx_total := len(block.Transactions)
 				now := time.Now().Unix()
 				relayCount := 0
@@ -619,4 +635,37 @@ func (p *Pbft) handleRelay(content []byte) {
 	}
 	fmt.Printf("节点%s已接收到分片%v发来的relay交易 \n", p.Node.nodeID, relay.ShardID)
 	p.Node.CurChain.Tx_pool.AddTxs(relay.Txs)
+}
+
+func (p *Pbft) handleCtx2(content []byte) {
+	relay := new(Relay)
+	err := json.Unmarshal(content, relay)
+	if err != nil {
+		log.Panic(err)
+	}
+	fmt.Printf("节点%s已接收到分片%v发来的CTX2交易 \n", p.Node.nodeID, relay.ShardID)
+	p.Node.CurChain.Tx_pool.AddTxs(relay.Txs)
+}
+
+func sendBrokerCtx2Msg(txs []*core.Transaction) {
+	shard2Tx := make(map[string][]*core.Transaction)
+	for _, v := range txs {
+		sid := fmt.Sprintf("S%d", utils.Addr2Shard(hex.EncodeToString(v.Recipient)))
+		shard2Tx[sid] = append(shard2Tx[sid], v)
+	}
+	for k, v := range shard2Tx {
+		r := Relay{
+			Txs:     v,
+			ShardID: k,
+		}
+		bc, err := json.Marshal(r)
+		if err != nil {
+			log.Panic(err)
+		}
+		targetLeader := params.NodeTable[k]["N0"]
+		fmt.Printf("正在向分片%v的主节点发送CTX2交易\n", k)
+		message := jointMessage(cCTX2, bc)
+		utils.TcpDial(message, targetLeader)
+	}
+
 }
