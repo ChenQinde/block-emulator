@@ -202,3 +202,24 @@ bug源于
    - 上述变量在新增用户记录时，没有做好记录。
 
 2. 新增了 utils.go 中新增加一个函数，generateTxs，用来随机生成数据集。
+
+2023-01-06：
+
+1. 添加broker跨分片交易处理，具体原理如下
+
+   - 确定broker账户，更新分片账户数据，为每个分片添加broker账户
+   - 将一部分的relay交易转化为broker交易，需要指定broker，目前是全部转换
+   - 原始交易注入时，将原始broker交易转化为ctx1交易，即a->c 转化为 a->b,b为broker
+   - ctx1交易提交后，生成ctx2交易，并且发送到对应分片，即a->b 生成 b->c, b 为 broker
+2. 交易所属分片划分策略，具体如下
+
+   - sender和recipient都不是broker，按照sender进行划分
+   - sender是broker，recipient不是，则按照recipient进行划分
+   - sender和recipient都是broker，则按照recipient原始划分（即直接调用地址转分片方法的结果）
+
+3. bug 或 todo:
+
+   - relay交易和broker交易按照比例进行划分
+   - 客户端（仿真者）因为新加入交易的原因目前保存，导致系统无法终止
+  
+  
