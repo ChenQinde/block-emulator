@@ -1,6 +1,7 @@
 package partition
 
 import (
+	"blockEmulator/params"
 	"bytes"
 	"crypto/sha256"
 	"encoding/gob"
@@ -121,7 +122,7 @@ func (cs *CLPAState) computeEdges2Shard() {
 func (cs *CLPAState) Init_CLPAState(wp float64, mIter, sn int) {
 	cs.WeightPenalty = wp
 	cs.MaxIterations = mIter
-	cs.ShardNum = sn
+	cs.ShardNum = params.Config.Shard_num
 	cs.VertexsNumInShard = make([]int, cs.ShardNum)
 	cs.PartitionMap = make(map[Vertex]int)
 }
