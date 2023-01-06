@@ -2,16 +2,16 @@ package pbft
 
 import (
 	"blockEmulator/account"
+	"blockEmulator/core"
 	"blockEmulator/params"
 	"blockEmulator/partition"
 	"blockEmulator/utils"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
+	"math/big"
 	"strconv"
-
-	"github.com/boltdb/bolt"
 )
 
 // 地址 到 分片 的映射
@@ -25,14 +25,18 @@ func (p *Pbft) Addr2Shard_byMap(addr string) int {
 
 // 主分片发向 W 分片的信息，告知 W 分片划分情况
 type PartitionMsg_FromMtoW struct {
-	PartitionMap    map[string]int    // 最新的划分表
-	AcountsInserted []account.Account // 新加入的账户
+	PartitionMap   map[string]int // 最新的划分表
+	NoncefromNew   []uint64       // 账户的Nonce
+	BalancefromNew []*big.Int     // 账户的余额
+	AddrfromNew    []string       // 新账户
 }
 
 // 账户迁移信息，W 分片发向 W 分片，为了实现不同分片之间的 账户数据 信息交换
 type AccountTransferMsg struct {
-	FromShardID, ToShardID int               // 迁移的账户来自哪个Shard，发送至哪个Shard
-	Transfer_AccountsList  []account.Account // 需要从 FromShardID 迁移至 ToShardID 的账户
+	FromShardID, ToShardID int        // 迁移的账户来自哪个Shard，发送至哪个Shard
+	Nonce                  []uint64   // 需要转移的账户的Nonce
+	Balance                []*big.Int // 需要转移的账户的余额
+	Addr                   []string   // 需要从 FromShardID 迁移至 ToShardID 的账户
 }
 
 // 消息编码 针对 划分消息
@@ -80,28 +84,6 @@ func (p *Pbft) broadcastToShard(msg []byte, desShard int) {
 	go utils.TcpDial(msg, params.NodeTable[shardID]["N0"])
 }
 
-// 在一个本地数据库中插入一个 account
-func (p *Pbft) insertAccount_forLocal(ac account.Account) error {
-	dbpath := "./record/" + p.Node.shardID + "_" + p.Node.nodeID + "_" + "blockchain_db"
-	db, err := bolt.Open(dbpath, os.ModePerm, nil)
-	if err != nil {
-		return err
-	}
-	_ = db.Update(func(tx *bolt.Tx) error {
-		accountsBucket, _ := tx.CreateBucketIfNotExists([]byte("accounts"))
-		err := accountsBucket.Put(*ac.AddrByte, ac.Encode())
-		if err != nil {
-			log.Panic()
-		}
-		return nil
-	})
-	err = db.Close()
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 // 从本地获取 账户数据，package account 中有 GetAccount 方法了
 func (p *Pbft) getAccount_fromLocal(addr string) account.Account {
 	return *account.GetAccount(addr)
@@ -143,14 +125,19 @@ func (p *Pbft) generate_AccountTransferMsg(newMap map[string]int) []AccountTrans
 			continue
 		}
 		if osID := p.Addr2Shard_byMap(addr); osID == shardID { // 原先属于本分片，然后在 newMap 中迁移到了另一个分片 sID
-			ac := account.GetAccount(addr)
-			if ac == nil {
-				fmt.Printf("Node %s%s cannot find the addr %s \n", p.Node.shardID, p.Node.nodeID, addr)
-				continue
-			}
+			// acstate := account.GetAccountState(key)
+			// if !ok {
+			// 	fmt.Printf("Node %s%s cannot find the addr %s \n", p.Node.shardID, p.Node.nodeID, addr)
+			// 	continue
+			// }
+			hexaddr, _ := hex.DecodeString(addr)
+			acbyte, _ := p.Node.CurChain.StatusTrie.Get(hexaddr)
+			acstate := core.DecodeAccountState(acbyte)
 			cnt += 1
 			fmt.Printf("Node %s%s find the addr %s \n", p.Node.shardID, p.Node.nodeID, addr)
-			atmsg[sID].Transfer_AccountsList = append(atmsg[sID].Transfer_AccountsList, *ac)
+			atmsg[sID].Addr = append(atmsg[sID].Addr, addr)
+			atmsg[sID].Balance = append(atmsg[sID].Balance, acstate.Balance)
+			atmsg[sID].Nonce = append(atmsg[sID].Nonce, acstate.Nonce)
 		}
 	}
 	fmt.Printf("Node %s%s cnt =  %d \n", p.Node.shardID, p.Node.nodeID, cnt)
@@ -174,8 +161,14 @@ func (p *Pbft) handle_AccountTransferMsg(rawMsg []byte) {
 	}
 	fmt.Printf("Node %s%s receive the AccountTransferMsg\n", p.Node.shardID, p.Node.nodeID)
 	// 加入本地的数据库中
-	for _, ac := range atmsg.Transfer_AccountsList {
-		p.insertAccount_forLocal(ac)
+	for idx, acAddr := range atmsg.Addr {
+		// p.insertAccount_forLocal(ac)
+		accountState := &core.AccountState{
+			Balance: atmsg.Balance[idx],
+			Nonce:   atmsg.Nonce[idx],
+		}
+		hex_address, _ := hex.DecodeString(acAddr)
+		p.Node.CurChain.StatusTrie.Put(hex_address, accountState.Encode())
 	}
 	fmt.Printf("Node %s%s handled the AccountTransferMsg\n", p.Node.shardID, p.Node.nodeID)
 }
@@ -198,11 +191,14 @@ func (p *Pbft) handle_PartitionMsg_FromMtoW(pmsg PartitionMsg_FromMtoW) {
 	}
 
 	// 然后处理归属于本分片的新账户
-	for _, ac := range pmsg.AcountsInserted {
-		if pmsg.PartitionMap[ac.Address] == shardID {
-			// 加入本地的数据库中
-			p.insertAccount_forLocal(ac)
+	for idx, acAddr := range pmsg.AddrfromNew {
+		// p.insertAccount_forLocal(ac)
+		accountState := &core.AccountState{
+			Balance: pmsg.BalancefromNew[idx],
+			Nonce:   pmsg.NoncefromNew[idx],
 		}
+		hex_address, _ := hex.DecodeString(acAddr)
+		p.Node.CurChain.StatusTrie.Put(hex_address, accountState.Encode())
 	}
 	// 更新分片 map
 	// for addr, sID := range pmsg.PartitionMap {
@@ -216,8 +212,10 @@ func (p *Pbft) handle_PartitionMsg_FromMtoW(pmsg PartitionMsg_FromMtoW) {
 
 func (p *Pbft) Generate_PartitionMsg_FromMtoW(cs *partition.CLPAState) PartitionMsg_FromMtoW {
 	pMap := make(map[string]int)
+	fmt.Print("The partition Map is : \n")
 	for k, v := range cs.PartitionMap {
 		pMap[k.Addr] = v
+		fmt.Printf("%s\t%d\n", k.Addr, v)
 	}
 	pfw := PartitionMsg_FromMtoW{PartitionMap: pMap}
 	return pfw
