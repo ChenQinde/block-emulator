@@ -29,9 +29,9 @@ var (
 //	@Description: 判断交易是否为broker交易
 //	@param txID 交易的id
 //	@return bool 是或否
-func IsBrokerTx(txID int) bool {
+func IsBrokerTx(tx *core.Transaction) bool {
 	for _, v := range brokerTxs {
-		if v.Id == txID {
+		if v.Id == tx.Id && !IsBroker(hex.EncodeToString(tx.Sender)) {
 			return true
 		}
 	}
@@ -175,7 +175,7 @@ func AllocationTx() {
 //	@return []*core.Transaction ctx1
 func BrokerTx2CTX1(txs []*core.Transaction) []*core.Transaction {
 	for k, v := range txs {
-		if IsBrokerTx(v.Id) {
+		if IsBrokerTx(v) {
 			fmt.Println("原始交易↓")
 			txs[k].PrintTx()
 			recipient, _ := hex.DecodeString(txToBroker[v.Id][2:])
@@ -195,8 +195,9 @@ func BrokerTx2CTX1(txs []*core.Transaction) []*core.Transaction {
 func CTX1ToCTX2(txs []*core.Transaction) []*core.Transaction {
 	ctx2 = make([]*core.Transaction, 0)
 	for _, v := range txs {
-		if IsBrokerTx(v.Id) {
+		if IsBrokerTx(v) {
 			brokerTx := getBrokerTx(v.Id)
+
 			id := len(allTxs)
 			newTx := &core.Transaction{
 				Sender:    v.Recipient,
