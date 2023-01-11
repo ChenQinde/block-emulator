@@ -93,9 +93,9 @@ const (
 
 	cRelay command = "relay"
 
-	cCTX2 command = "ctx2"
-
-	cStop command = "stop"
+	cCTX2  command = "ctx2"
+	cCTX2N command = "ctx2n"
+	cStop  command = "stop"
 )
 
 // 默认前十二位为命令名称

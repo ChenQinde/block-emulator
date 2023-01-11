@@ -373,6 +373,7 @@ func (p *Pbft) handleCommit(content []byte) {
 				for _, v := range ctx2 {
 					v.PrintTx()
 				}
+				sendClientNewTxNum(ctx2)
 				sendBrokerCtx2Msg(ctx2)
 
 				tx_total := len(block.Transactions)
@@ -384,7 +385,7 @@ func (p *Pbft) handleCommit(content []byte) {
 				for _, v := range block.Transactions {
 					// 若交易接收者属于本分片才加入已上链交易集
 					//fmt.Println("Addr2Shard is ", utils.Addr2Shard(hex.EncodeToString(v.Recipient)), hex.EncodeToString(v.Recipient))
-					if params.ShardTable[p.Node.shardID] == utils.Addr2Shard(hex.EncodeToString(v.Recipient)) {
+					if params.ShardTable[p.Node.shardID] == utils.Addr2Shard(hex.EncodeToString(v.Recipient)) || broker.IsBroker(hex.EncodeToString(v.Recipient)) {
 						commit_ids = append(commit_ids, v.Id)
 						s := fmt.Sprintf("%v %v %v %v %v", v.Id, block.Header.Number, v.RequestTime, now, now-v.RequestTime)
 						p.txlog.Write(strings.Split(s, " "))
@@ -667,5 +668,14 @@ func sendBrokerCtx2Msg(txs []*core.Transaction) {
 		message := jointMessage(cCTX2, bc)
 		utils.TcpDial(message, targetLeader)
 	}
+}
 
+func sendClientNewTxNum(txs []*core.Transaction) {
+	n := len(txs)
+	c, err := json.Marshal(n)
+	if err != nil {
+		log.Panic(err)
+	}
+	m := jointMessage(cCTX2N, c)
+	utils.TcpDial(m, params.ClientAddr)
 }
