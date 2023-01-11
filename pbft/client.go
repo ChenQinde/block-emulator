@@ -15,6 +15,7 @@ import (
 
 func RunClient(path string) {
 	tx_cnt := CountTx(path)
+	fmt.Println("交易总数为:", tx_cnt)
 	finished := make([]bool, tx_cnt)
 	finished_cnt := 0
 	all_finish := make(chan int)
@@ -23,6 +24,18 @@ func RunClient(path string) {
 	var handle func([]byte) = func(data []byte) {
 		cmd, content := splitMessage(data)
 		switch command(cmd) {
+		case cCTX2N:
+			n := new(int)
+			err := json.Unmarshal(content, n)
+			fmt.Println("添加CTX2交易,数量为:", *n)
+			if err != nil {
+				log.Panic(err)
+			}
+			for i := 0; i < *n; i++ {
+				finished = append(finished, false)
+				tx_cnt++
+			}
+
 		case cReply:
 			ids := new([]int)
 			err := json.Unmarshal(content, ids)
