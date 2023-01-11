@@ -204,5 +204,21 @@ bug源于
 2. 新增了 utils.go 中新增加一个函数，generateTxs，用来随机生成数据集。
 
 2023-01-06：
+1. 添加broker跨分片交易处理，具体原理如下
 
-1. 修复了 ./pbft/account_transfer.go 中由于读取账户失败导致的进程停机问题（需要等停机相关代码实现）
+   - 确定broker账户，更新分片账户数据，为每个分片添加broker账户
+   - 将一部分的relay交易转化为broker交易，需要指定broker，目前是全部转换
+   - 原始交易注入时，将原始broker交易转化为ctx1交易，即a->c 转化为 a->b,b为broker
+   - ctx1交易提交后，生成ctx2交易，并且发送到对应分片，即a->b 生成 b->c, b 为 broker
+2. 交易所属分片划分策略，具体如下
+
+   - sender和recipient都不是broker，按照sender进行划分
+   - sender是broker，recipient不是，则按照recipient进行划分
+   
+3. 修复了 ./pbft/account_transfer.go 中由于读取账户失败导致的进程停机问题（需要等停机相关代码实现）
+
+2023-01-11：
+1. 修复了客户端无法停止的bug
+
+   - bug原因:因为broker交易需要生成新的交易,但原有交易数目和新交易数目不匹配导致数组越界
+   - 每次broker交易生成CTX2交易时,会向客户端发送消息用于更新交易总数
